@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: #161512; }
+  ::selection { background: rgba(200,116,77,0.30); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @keyframes blink { 0%,80%,100% { opacity: 0.25; } 40% { opacity: 1; } }
+  .lg-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+  .lg-scroll::-webkit-scrollbar-thumb { background: #322e26; border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+  .lg-scroll::-webkit-scrollbar-track { background: transparent; }
+</style>
+</helmet>
+
+<div style="--accent:{{ accent }}; --bg:#161512; --panel:#1c1a15; --panel2:#211f19; --bd:#2b2820; --bd2:#39342b; --tx:#ece8df; --mut:#9a9384; --faint:#6b655a; --green:#5fb07e; --red:#d96a5e; --cool:#85a0c4; height:100vh; width:100%; display:flex; overflow:hidden; background:var(--bg); color:var(--tx); font-family:'Geist',system-ui,sans-serif; font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;">
+
+  <sc-if value="{{ showRail }}" hint-placeholder-val="{{ true }}">
+  <aside style="width:248px; flex:none; border-right:1px solid var(--bd); background:var(--panel); display:flex; flex-direction:column; padding:0;">
+    <div style="display:flex; align-items:center; gap:10px; padding:18px 18px 16px;">
+      <div style="width:26px; height:26px; border-radius:7px; background:var(--accent); display:flex; align-items:center; justify-content:center; flex:none;">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M3 3.2h10M3 6.4h10M3 9.6h7M3 12.8h10" stroke="#1c140f" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </div>
+      <div style="font-weight:600; font-size:15px; letter-spacing:-0.01em;">Ledger</div>
+    </div>
+
+    <div style="padding:6px 14px 8px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; letter-spacing:0.08em; text-transform:uppercase; color:var(--faint); padding:8px 6px 6px;">Tracked repos</div>
+      <div style="display:flex; align-items:flex-start; gap:9px; padding:9px 10px; border-radius:8px; background:var(--panel2); border:1px solid var(--bd2); cursor:default;">
+        <div style="width:7px; height:7px; border-radius:50%; background:var(--accent); margin-top:6px; flex:none;"></div>
+        <div style="min-width:0;">
+          <div style="font-weight:500; font-size:13.5px;">rag-pilot</div>
+          <div style="font-size:11.5px; color:var(--mut); margin-top:2px;">{{ railTopicCount }} topics · 1 check ready</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="padding:2px 14px 8px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; letter-spacing:0.08em; text-transform:uppercase; color:var(--faint); padding:8px 6px 6px;">Log sources</div>
+      <div style="display:flex; align-items:center; gap:9px; padding:7px 10px;">
+        <span style="width:6px; height:6px; border-radius:50%; background:var(--accent); flex:none;"></span>
+        <span style="font-size:13px;">Codex</span>
+        <span style="margin-left:auto; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--faint);">~/.codex/sessions</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:9px; padding:7px 10px;">
+        <span style="width:6px; height:6px; border-radius:50%; background:var(--accent); flex:none;"></span>
+        <span style="font-size:13px;">Claude Code</span>
+        <span style="margin-left:auto; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--faint);">~/.claude</span>
+      </div>
+    </div>
+
+    <div style="flex:1;"></div>
+
+    <div style="margin:14px; padding:13px 13px; border:1px dashed var(--bd2); border-radius:9px; background:rgba(255,255,255,0.012);">
+      <div style="display:flex; align-items:center; gap:7px; color:var(--mut); font-size:11px; font-family:'JetBrains Mono',monospace; margin-bottom:6px;">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.3"/><path d="M8 5.2v3.4M8 10.6h.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        AUTO-DISCOVERY
+      </div>
+      <div style="font-size:12px; color:var(--mut); line-height:1.5;">Decisions appear here automatically from the Codex and Claude Code logs already on your machine.</div>
+    </div>
+  </aside>
+  </sc-if>
+
+  <main style="flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden;">
+
+    <!-- top bar -->
+    <div style="height:52px; flex:none; border-bottom:1px solid var(--bd); display:flex; align-items:center; justify-content:space-between; padding:0 22px; background:var(--bg);">
+      <div style="display:flex; align-items:center; gap:9px; font-size:13px;">
+        <span style="color:var(--faint);">Ledger</span>
+        <span style="color:var(--faint); font-size:11px;">›</span>
+        <span style="color:var(--tx); font-weight:500;">rag-pilot</span>
+        <sc-if value="{{ crumbTopic }}" hint-placeholder-val="">
+          <span style="color:var(--faint); font-size:11px;">›</span>
+          <span style="color:var(--mut);">{{ crumbTopic }}</span>
+        </sc-if>
+      </div>
+
+      <sc-if value="{{ isWorkspace }}" hint-placeholder-val="">
+      <div style="display:flex; align-items:center; gap:16px;">
+        <div style="font-family:'JetBrains Mono',monospace; font-size:11.5px; color:var(--mut);">{{ statsLabel }}</div>
+        <div onClick="{{ exitCheck }}" style="font-size:12.5px; color:var(--mut); cursor:pointer; padding:5px 10px; border:1px solid var(--bd2); border-radius:7px;" style-hover="color:var(--tx); border-color:var(--faint);">Exit check</div>
+      </div>
+      </sc-if>
+    </div>
+
+    <!-- ============ DASHBOARD ============ -->
+    <sc-if value="{{ isDashboard }}" hint-placeholder-val="{{ true }}">
+    <div class="lg-scroll" style="flex:1; overflow:auto;">
+      <div style="max-width:980px; margin:0 auto; padding:40px 44px 80px;">
+        <div style="margin-bottom:26px;">
+          <h1 style="font-size:23px; font-weight:600; letter-spacing:-0.02em; margin:0 0 7px;">Ownership worklist</h1>
+          <div style="color:var(--mut); font-size:14px; max-width:620px;">Load-bearing decisions your coding agents shipped, ranked by how much they matter and how thinly you own them. Ledger recommends checks — it never asserts the gap.</div>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <sc-for list="{{ topics }}" as="t" hint-placeholder-count="5">
+          <div onClick="{{ t.onOpen }}" style="border:1px solid var(--bd); background:var(--panel); border-radius:11px; padding:16px 18px; cursor:{{ t.cursor }}; transition:border-color 120ms, background 120ms;" style-hover="border-color:var(--bd2);">
+            <div style="display:flex; align-items:flex-start; gap:16px;">
+              <div style="font-family:'JetBrains Mono',monospace; font-size:13px; color:var(--faint); width:20px; flex:none; padding-top:1px;">{{ t.rank }}</div>
+              <div style="flex:1; min-width:0;">
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                  <span style="font-size:15px; font-weight:550; letter-spacing:-0.01em;">{{ t.title }}</span>
+                  <span style="{{ t.badgeCss }}">{{ t.badgeLabel }}</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:11px;">
+                  <sc-for list="{{ t.chips }}" as="c" hint-placeholder-count="3">
+                    <span style="{{ c.css }}">{{ c.label }}</span>
+                  </sc-for>
+                </div>
+              </div>
+              <sc-if value="{{ t.isHero }}" hint-placeholder-val="">
+                <div style="display:flex; align-items:center; gap:6px; color:var(--accent); font-size:13px; font-weight:500; flex:none; padding-top:2px;">Open <span style="font-size:15px;">→</span></div>
+              </sc-if>
+            </div>
+            <sc-if value="{{ t.expanded }}" hint-placeholder-val="">
+              <div style="margin-top:14px; padding-top:13px; border-top:1px solid var(--bd); display:flex; gap:10px;">
+                <div style="width:6px; height:6px; border-radius:50%; background:var(--accent); margin-top:7px; flex:none;"></div>
+                <div style="font-size:13px; color:var(--mut); line-height:1.6;"><span style="color:var(--tx); font-weight:500;">Why it's #1.</span> {{ t.why }}</div>
+              </div>
+            </sc-if>
+          </div>
+          </sc-for>
+        </div>
+
+        <div style="margin-top:22px; font-size:12px; color:var(--faint); font-family:'JetBrains Mono',monospace; display:flex; align-items:center; gap:7px;">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.2"/><path d="M8 5.2v3.4M8 10.6h.01" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          One real repo. Only the tenant-isolation topic is grounded in real evidence for this demo.
+        </div>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- ============ TOPIC PAGE ============ -->
+    <sc-if value="{{ isTopic }}" hint-placeholder-val="">
+    <div class="lg-scroll" style="flex:1; overflow:auto;">
+      <div style="max-width:1120px; margin:0 auto; padding:30px 44px 80px;">
+        <div onClick="{{ backToWorklist }}" style="display:inline-flex; align-items:center; gap:6px; color:var(--mut); font-size:13px; cursor:pointer; margin-bottom:20px;" style-hover="color:var(--tx);">← Worklist</div>
+
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:24px; margin-bottom:8px;">
+          <div style="min-width:0;">
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+              <h1 style="font-size:24px; font-weight:600; letter-spacing:-0.02em; margin:0;">Tenant isolation in document caching</h1>
+              <span style="{{ heroBadgeCss }}">{{ heroBadgeLabel }}</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:9px; margin-top:11px; color:var(--accent); font-size:14px; font-weight:500;">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.8 2.5 4.2v3.4c0 3.4 2.3 5.7 5.5 6.6 3.2-.9 5.5-3.2 5.5-6.6V4.2L8 1.8Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M5.8 8.1 7.3 9.6l3-3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              Ownership check recommended
+            </div>
+          </div>
+          <button onClick="{{ heroCta }}" style="flex:none; background:var(--accent); color:#1c140f; border:none; border-radius:9px; padding:11px 20px; font-family:'Geist',sans-serif; font-size:14px; font-weight:600; cursor:pointer; box-shadow:0 1px 0 rgba(0,0,0,0.2);">{{ heroCtaLabel }}</button>
+        </div>
+
+        <div style="font-size:13.5px; color:var(--mut); margin-bottom:26px; max-width:680px;">This decision is load-bearing and has no reasoning trail. Ledger isn't claiming you don't understand it — it's offering to test whether you can still operate it.</div>
+
+        <!-- 2 col body -->
+        <div style="display:grid; grid-template-columns:1.55fr 1fr; gap:18px; align-items:start;">
+          <!-- code reality -->
+          <div style="border:1px solid var(--bd); border-radius:12px; background:var(--panel); overflow:hidden;">
+            <div style="padding:14px 18px; border-bottom:1px solid var(--bd); display:flex; align-items:center; justify-content:space-between;">
+              <div style="font-size:13px; font-weight:600; letter-spacing:0.01em;">Code reality</div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:11.5px; color:var(--mut);">ledger_rag/cache.py</div>
+            </div>
+            <div style="padding:13px 18px; border-bottom:1px solid var(--bd); display:flex; align-items:center; gap:7px; flex-wrap:wrap;">
+              <span style="font-size:12px; color:var(--faint); margin-right:2px;">Why load-bearing</span>
+              <span style="{{ chipPlainCss }}">retrieval path</span>
+              <span style="{{ chipPlainCss }}">5 callers</span>
+              <span style="{{ chipRiskCss }}">risk: tenant-isolation</span>
+            </div>
+            <div class="lg-scroll" style="background:#141310; padding:16px 18px; overflow:auto; font-family:'JetBrains Mono',monospace; font-size:13px; line-height:21px; color:var(--tx);">{{ committedHighlight }}</div>
+            <div style="padding:13px 18px; border-top:1px solid var(--bd); font-size:12.5px; color:var(--mut); line-height:1.55;">If two tenants issue the same query over overlapping document IDs, a cache key that omits <span style="font-family:'JetBrains Mono',monospace; color:var(--tx); font-size:12px;">tenant_id</span> can return one tenant's results to another.</div>
+          </div>
+
+          <!-- right stack -->
+          <div style="display:flex; flex-direction:column; gap:18px;">
+            <!-- authoring receipt (sourced from codex logs) -->
+            <div style="border:1px solid var(--bd); border-radius:12px; background:var(--panel); overflow:hidden;">
+              <div style="padding:14px 16px; border-bottom:1px solid var(--bd); display:flex; align-items:center; gap:8px;">
+                <div style="font-size:13px; font-weight:600;">Authoring receipt</div>
+                <span style="{{ chipCodexCss }}">⬡ Codex</span>
+                <span style="margin-left:auto; display:flex; align-items:center; gap:5px; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--faint);">
+                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M4 7V5a4 4 0 0 1 8 0v2" stroke="currentColor" stroke-width="1.3"/><rect x="3" y="7" width="10" height="6.5" rx="1.5" stroke="currentColor" stroke-width="1.3"/></svg>
+                  imported from logs
+                </span>
+              </div>
+              <div style="padding:13px 16px; border-bottom:1px solid var(--bd);">
+                <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-family:'JetBrains Mono',monospace; font-size:11px;">
+                  <span style="{{ toolChipCss }}">read cache.py</span><span style="color:var(--faint);">→</span>
+                  <span style="{{ toolChipCss }}">apply_patch</span><span style="color:var(--faint);">→</span>
+                  <span style="{{ toolChipCss }}">shell pytest -q</span>
+                </div>
+              </div>
+              <div style="padding:14px 16px; display:flex; flex-direction:column; gap:10px;">
+                <div style="display:flex; gap:8px;">
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--faint); padding-top:3px; flex:none; width:40px;">you</div>
+                  <div style="font-size:12.5px; color:var(--mut); line-height:1.5;">add a cache in front of the reranker so repeat queries don't re-hit the vector store</div>
+                </div>
+                <div style="display:flex; gap:8px;">
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--accent); padding-top:3px; flex:none; width:40px;">codex</div>
+                  <div style="font-size:12.5px; color:var(--tx); line-height:1.5;">Adding a <span style="font-family:'JetBrains Mono',monospace; font-size:11.5px; color:var(--accent);">RetrievalCache</span> keyed on the query and document set, with get/put wrappers around the store…</div>
+                </div>
+              </div>
+              <div style="padding:11px 16px; border-top:1px solid var(--bd); display:flex; align-items:center; gap:10px;">
+                <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">rollout 9f3c · 18d ago · ~/.codex/sessions</span>
+                <span onClick="{{ toggleLog }}" style="margin-left:auto; flex:none; font-size:11.5px; color:var(--accent); cursor:pointer; display:inline-flex; align-items:center; gap:4px;" style-hover="text-decoration:underline;">{{ logToggleLabel }}</span>
+              </div>
+              <sc-if value="{{ showLog }}" hint-placeholder-val="">
+                <div class="lg-scroll" style="border-top:1px solid var(--bd); background:#121110; max-height:188px; overflow:auto;">
+                  <div style="padding:8px 14px; font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--faint); border-bottom:1px solid var(--bd); position:sticky; top:0; background:#121110;">session-9f3c.jsonl</div>
+                  <pre style="margin:0; padding:10px 14px; font-family:'JetBrains Mono',monospace; font-size:10.5px; line-height:1.65; color:#8c8678; white-space:pre-wrap; word-break:break-word;">{{ codexLog }}</pre>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </div>
+
+        <!-- practice history (post-check) -->
+        <sc-if value="{{ heroPracticed }}" hint-placeholder-val="">
+        <div style="margin-top:26px; border:1px solid var(--bd); border-radius:12px; background:var(--panel); overflow:hidden; animation:fadeUp 240ms ease both;">
+          <div style="padding:14px 18px; border-bottom:1px solid var(--bd); display:flex; align-items:center; gap:9px;">
+            <div style="font-size:13px; font-weight:600;">Practice history</div>
+            <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--faint);">1 ownership event recorded</span>
+          </div>
+          <div style="padding:8px 8px;">
+            <div style="display:grid; grid-template-columns:repeat(6,1fr); gap:1px; background:var(--bd);">
+              <sc-for list="{{ history }}" as="h" hint-placeholder-count="6">
+                <div style="background:var(--panel); padding:14px 16px;">
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:0.06em; text-transform:uppercase; color:var(--faint); margin-bottom:7px;">{{ h.k }}</div>
+                  <div style="font-size:14px; font-weight:500; color:{{ h.color }};">{{ h.v }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <div style="padding:12px 18px; border-top:1px solid var(--bd); font-size:12.5px; color:var(--mut); line-height:1.55;">Green behavior is necessary, not proof of mastery. Ledger records the <span style="color:var(--tx);">cost</span> of getting there — time, attempts, whether you reached for the answer — not a pass/fail score.</div>
+        </div>
+        </sc-if>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- ============ CHECK WORKSPACE ============ -->
+    <sc-if value="{{ isWorkspace }}" hint-placeholder-val="">
+    <div style="flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden;">
+
+      <div style="flex:1; min-height:0; display:flex; overflow:hidden;">
+        <div class="lg-scroll" style="width:{{ taskWpx }}; flex:none; border-right:1px solid var(--bd); background:var(--panel); overflow:auto; padding:18px 18px;">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:var(--faint); margin-bottom:14px;">Task</div>
+          <div style="display:inline-flex; align-items:center; gap:6px; font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--red); border:1px solid rgba(217,106,94,0.3); background:rgba(217,106,94,0.08); padding:3px 8px; border-radius:5px; margin-bottom:14px;">● behavior failing</div>
+          <h2 style="font-size:16px; font-weight:600; margin:0 0 10px; letter-spacing:-0.01em;">Cross-tenant cache leak</h2>
+          <p style="font-size:13px; color:var(--mut); line-height:1.6; margin:0 0 16px;">RetrievalCache is serving one tenant's documents to another. When two tenants issue the same query over the same document set, the second caller receives the first caller's cached results.</p>
+          <div style="border-top:1px solid var(--bd); padding-top:14px;">
+            <div style="font-size:11px; color:var(--faint); margin-bottom:6px;">Failing test</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:11.5px; color:var(--tx); word-break:break-all;">test_cache_isolation_<wbr>between_tenants</div>
+          </div>
+          <div style="border-top:1px solid var(--bd); padding-top:14px; margin-top:14px;">
+            <div style="font-size:11px; color:var(--faint); margin-bottom:6px;">Invariant to restore</div>
+            <div style="font-size:12.5px; color:var(--mut); line-height:1.55;">Each tenant must only ever receive results computed for that tenant.</div>
+          </div>
+        </div>
+        <div onMouseDown="{{ dragTask }}" title="Drag to resize" style="width:8px; flex:none; margin:0 -4px; z-index:6; cursor:col-resize; background:transparent;" style-hover="background:var(--accent);"></div>
+
+        <!-- SANDBOX -->
+        <div style="flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden; background:var(--bg);">
+          <div style="flex:1; min-height:0; display:flex; overflow:hidden;">
+            <!-- file tree -->
+            <div style="width:172px; flex:none; border-right:1px solid var(--bd); background:var(--panel); padding:12px 8px; overflow:auto;">
+              <div style="font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:0.07em; text-transform:uppercase; color:var(--faint); padding:4px 8px 10px;">Sandbox</div>
+              <sc-for list="{{ files }}" as="f" hint-placeholder-count="3">
+                <div onClick="{{ f.onClick }}" style="{{ f.css }}">
+                  <span style="opacity:0.7;">{{ f.icon }}</span>
+                  <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ f.name }}</span>
+                  <sc-if value="{{ f.modified }}" hint-placeholder-val=""><span style="width:6px; height:6px; border-radius:50%; background:var(--accent); flex:none;"></span></sc-if>
+                </div>
+              </sc-for>
+            </div>
+
+            <!-- editor + output -->
+            <div style="flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden;">
+              <div style="flex:none; height:38px; border-bottom:1px solid var(--bd); background:var(--panel); display:flex; align-items:center; gap:8px; padding:0 14px; font-family:'JetBrains Mono',monospace; font-size:11.5px; color:var(--mut);">
+                <span style="opacity:0.7;">▾</span>{{ activeFile }}
+                <sc-if value="{{ activeReadOnly }}" hint-placeholder-val=""><span style="margin-left:auto; font-size:10px; color:var(--faint); border:1px solid var(--bd2); padding:1px 6px; border-radius:4px;">read-only</span></sc-if>
+              </div>
+
+              <!-- editable buffer -->
+              <sc-if value="{{ activeEditable }}" hint-placeholder-val="{{ true }}">
+              <div style="flex:1; min-height:0; display:flex; overflow:hidden; background:#141310; position:relative;">
+                <div style="flex:none; width:46px; padding:14px 0; text-align:right; font-family:'JetBrains Mono',monospace; font-size:13px; line-height:21px; color:#46423a; user-select:none; background:#141310;">
+                  <sc-for list="{{ lineNos }}" as="n" hint-placeholder-count="20"><div style="padding-right:12px;">{{ n }}</div></sc-for>
+                </div>
+                <div style="flex:1; min-width:0; position:relative;">
+                  <pre style="margin:0; padding:14px 16px; font-family:'JetBrains Mono',monospace; font-size:13px; line-height:21px; white-space:pre; pointer-events:none; min-height:100%;">{{ editorHighlight }}</pre>
+                  <textarea spellcheck="false" value="{{ code }}" onChange="{{ onCode }}" style="position:absolute; inset:0; margin:0; padding:14px 16px; font-family:'JetBrains Mono',monospace; font-size:13px; line-height:21px; white-space:pre; overflow:auto; border:none; outline:none; resize:none; background:transparent; color:transparent; caret-color:var(--tx); tab-size:4;"></textarea>
+                </div>
+              </div>
+              </sc-if>
+
+              <!-- read-only buffer -->
+              <sc-if value="{{ activeReadOnly }}" hint-placeholder-val="">
+              <div class="lg-scroll" style="flex:1; min-height:0; display:flex; overflow:auto; background:#141310;">
+                <div style="flex:none; width:46px; padding:14px 0; text-align:right; font-family:'JetBrains Mono',monospace; font-size:13px; line-height:21px; color:#3a362f; user-select:none;">
+                  <sc-for list="{{ roLineNos }}" as="n" hint-placeholder-count="14"><div style="padding-right:12px;">{{ n }}</div></sc-for>
+                </div>
+                <pre style="margin:0; padding:14px 16px; font-family:'JetBrains Mono',monospace; font-size:13px; line-height:21px; white-space:pre; color:var(--mut);">{{ roHighlight }}</pre>
+              </div>
+              </sc-if>
+
+              <!-- run bar -->
+              <div style="flex:none; border-top:1px solid var(--bd); background:var(--panel); padding:11px 16px; display:flex; align-items:center; gap:14px;">
+                <button onClick="{{ runChecks }}" style="{{ runBtnCss }}">
+                  <sc-if value="{{ running }}" hint-placeholder-val=""><span style="width:11px; height:11px; border:2px solid rgba(28,20,15,0.35); border-top-color:#1c140f; border-radius:50%; display:inline-block; animation:spin 0.7s linear infinite;"></span></sc-if>
+                  {{ runLabel }}
+                </button>
+                <div style="font-family:'JetBrains Mono',monospace; font-size:11.5px; color:var(--faint);">exit code is the oracle · pytest -q</div>
+              </div>
+
+              <!-- output -->
+              <div class="lg-scroll" style="flex:none; height:200px; border-top:1px solid var(--bd); background:#121110; overflow:auto;">
+                <div style="{{ bannerCss }}">{{ bannerLabel }}</div>
+                <pre style="margin:0; padding:12px 16px; font-family:'JetBrains Mono',monospace; font-size:11.5px; line-height:1.65; color:var(--mut); white-space:pre-wrap;">{{ testOutput }}</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- COACH -->
+        <div onMouseDown="{{ dragCoach }}" title="Drag to resize" style="width:8px; flex:none; margin:0 -4px; z-index:6; cursor:col-resize; background:transparent;" style-hover="background:var(--accent);"></div>
+        <div style="{{ coachPaneCss }}">
+          <div style="flex:none; padding:14px 16px; border-bottom:1px solid var(--bd); background:var(--panel);">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div style="width:8px; height:8px; border-radius:50%; background:var(--accent);"></div>
+              <div style="font-size:13px; font-weight:600;">Coach</div>
+              <span style="margin-left:auto; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--faint); border:1px solid var(--bd2); padding:2px 7px; border-radius:5px;">claude -p · tools denied</span>
+            </div>
+            <div style="font-size:11.5px; color:var(--mut); margin-top:6px;">Conceptual help only. The coach can't see your code or the fix — by design.</div>
+          </div>
+
+          <div class="lg-scroll" style="flex:1; min-height:0; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:14px;">
+            <sc-for list="{{ thread }}" as="m" hint-placeholder-count="1">
+              <!-- user -->
+              <sc-if value="{{ m.isUser }}" hint-placeholder-val="">
+                <div style="align-self:flex-end; max-width:88%; background:var(--panel2); border:1px solid var(--bd2); border-radius:11px 11px 3px 11px; padding:9px 13px; font-size:13px; color:var(--tx); line-height:1.5;">{{ m.text }}</div>
+              </sc-if>
+              <!-- thinking -->
+              <sc-if value="{{ m.isThinking }}" hint-placeholder-val="">
+                <div style="align-self:flex-start; display:flex; gap:5px; padding:10px 4px;">
+                  <span style="width:6px; height:6px; border-radius:50%; background:var(--mut); animation:blink 1.2s infinite 0s;"></span>
+                  <span style="width:6px; height:6px; border-radius:50%; background:var(--mut); animation:blink 1.2s infinite 0.2s;"></span>
+                  <span style="width:6px; height:6px; border-radius:50%; background:var(--mut); animation:blink 1.2s infinite 0.4s;"></span>
+                </div>
+              </sc-if>
+              <!-- coach card -->
+              <sc-if value="{{ m.isCoach }}" hint-placeholder-val="{{ true }}">
+                <div style="{{ m.cardCss }}">
+                  <sc-if value="{{ m.refusal }}" hint-placeholder-val="">
+                    <div style="display:flex; align-items:center; gap:7px; margin-bottom:10px;">
+                      <span style="font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:0.05em; text-transform:uppercase; color:var(--accent); border:1px solid rgba(200,116,77,0.35); padding:2px 7px; border-radius:5px;">Patch withheld</span>
+                    </div>
+                    <div style="font-size:13px; color:var(--tx); line-height:1.55; margin-bottom:13px;">{{ m.lead }}</div>
+                  </sc-if>
+                  <sc-if value="{{ m.concept }}" hint-placeholder-val="">
+                    <div style="margin-bottom:12px;">
+                      <div style="font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:0.05em; text-transform:uppercase; color:var(--accent); margin-bottom:5px;">{{ m.conceptLabel }}</div>
+                      <div style="font-size:13px; color:var(--tx); line-height:1.55;">{{ m.concept }}</div>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{ m.diagnostic }}" hint-placeholder-val="">
+                    <div style="margin-bottom:12px;">
+                      <div style="font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:0.05em; text-transform:uppercase; color:var(--cool); margin-bottom:5px;">Diagnostic question</div>
+                      <div style="font-size:13px; color:var(--tx); line-height:1.55;">{{ m.diagnostic }}</div>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{ m.observation }}" hint-placeholder-val="">
+                    <div>
+                      <div style="font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:0.05em; text-transform:uppercase; color:var(--mut); margin-bottom:5px;">Suggested observation</div>
+                      <div style="font-size:13px; color:var(--mut); line-height:1.55;">{{ m.observation }}</div>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+            </sc-for>
+          </div>
+
+          <div style="flex:none; border-top:1px solid var(--bd); background:var(--panel); padding:12px;">
+            <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;">
+              <sc-for list="{{ coachChips }}" as="ch" hint-placeholder-count="3">
+                <div onClick="{{ ch.onClick }}" style="font-size:11.5px; color:var(--mut); border:1px solid var(--bd2); background:var(--panel2); padding:5px 10px; border-radius:14px; cursor:pointer;" style-hover="color:var(--tx); border-color:var(--faint);">{{ ch.label }}</div>
+              </sc-for>
+            </div>
+            <div style="display:flex; gap:8px; align-items:flex-end;">
+              <textarea spellcheck="false" value="{{ coachInput }}" onChange="{{ onCoachInput }}" onKeyDown="{{ onCoachKey }}" placeholder="Ask a conceptual question…" rows="1" style="flex:1; resize:none; background:var(--bg); border:1px solid var(--bd2); border-radius:9px; padding:9px 12px; font-family:'Geist',sans-serif; font-size:13px; color:var(--tx); outline:none; line-height:1.4; max-height:90px;"></textarea>
+              <button onClick="{{ sendCoach }}" style="flex:none; background:var(--accent); color:#1c140f; border:none; border-radius:9px; width:38px; height:38px; cursor:pointer; display:flex; align-items:center; justify-content:center;">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2.5 8h10M8 3.5 12.5 8 8 12.5" stroke="#1c140f" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- completion bar -->
+      <sc-if value="{{ canComplete }}" hint-placeholder-val="">
+        <div style="flex:none; border-top:1px solid var(--bd); background:linear-gradient(0deg, rgba(95,176,126,0.08), transparent); padding:13px 22px; display:flex; align-items:center; gap:14px; animation:fadeUp 220ms ease both;">
+          <div style="display:flex; align-items:center; gap:9px;">
+            <div style="width:18px; height:18px; border-radius:50%; background:rgba(95,176,126,0.18); display:flex; align-items:center; justify-content:center;"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5 6.5 11.5 12.5 5" stroke="var(--green)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <span style="font-size:13.5px; color:var(--tx);">Behavior restored. Ledger captured your struggle, not just the pass.</span>
+          </div>
+          <button onClick="{{ completeCheck }}" style="margin-left:auto; background:var(--green); color:#10231a; border:none; border-radius:9px; padding:10px 18px; font-family:'Geist',sans-serif; font-size:13.5px; font-weight:600; cursor:pointer;">Finish &amp; save to ledger →</button>
+        </div>
+      </sc-if>
+
+    </div>
+    </sc-if>
+
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#C8744D&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;showMemoryBeat&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  state = {
+    screen: 'dashboard',
+    heroPracticed: false,
+    activeFile: 'cache.py',
+    code: '',
+    running: false,
+    phase: 'idle',           // idle | creating | running | fail | pass
+    runs: 0,
+    startTs: 0,
+    elapsedMin: 0,
+    thread: [],
+    coachInput: '',
+    histStats: null,
+    showLog: false,
+    taskW: 280,
+    coachW: 372,
+
+  };
+
+  COMMITTED = [
+    'class RetrievalCache:',
+    '    """Caches reranked retrieval results across requests."""',
+    '',
+    '    def cache_key(self, query, tenant_id, doc_ids):',
+    '        parts = [query, tenant_id, *sorted(doc_ids)]',
+    '        digest = hashlib.sha256("|".join(parts).encode()).hexdigest()',
+    '        return f"ret:{digest}"',
+  ].join('\n');
+
+  MUTATED = [
+    'import hashlib',
+    '',
+    '',
+    'class RetrievalCache:',
+    '    """Caches reranked retrieval results across requests."""',
+    '',
+    '    def __init__(self, store):',
+    '        self._store = store',
+    '',
+    '    def cache_key(self, query, tenant_id, doc_ids):',
+    '        parts = [query, *sorted(doc_ids)]',
+    '        digest = hashlib.sha256("|".join(parts).encode()).hexdigest()',
+    '        return f"ret:{digest}"',
+    '',
+    '    def get(self, query, tenant_id, doc_ids):',
+    '        return self._store.get(self.cache_key(query, tenant_id, doc_ids))',
+    '',
+    '    def put(self, query, tenant_id, doc_ids, results):',
+    '        self._store.set(self.cache_key(query, tenant_id, doc_ids), results)',
+  ].join('\n');
+
+  TEST = [
+    'from ledger_rag.cache import RetrievalCache',
+    'from tests.conftest import InMemoryStore',
+    '',
+    '',
+    'def test_cache_key_is_stable():',
+    '    cache = RetrievalCache(InMemoryStore())',
+    '    k1 = cache.cache_key("q", "acme", ["d1", "d2"])',
+    '    k2 = cache.cache_key("q", "acme", ["d2", "d1"])',
+    '    assert k1 == k2',
+    '',
+    '',
+    'def test_cache_isolation_between_tenants():',
+    '    cache = RetrievalCache(InMemoryStore())',
+    '    cache.put("quarterly numbers", "acme", ["d1"], ["ACME-DOC"])',
+    '    assert cache.get("quarterly numbers", "globex", ["d1"]) is None',
+  ].join('\n');
+
+  CONFTEST = [
+    'class InMemoryStore:',
+    '    def __init__(self):',
+    '        self._data = {}',
+    '',
+    '    def get(self, key):',
+    '        return self._data.get(key)',
+    '',
+    '    def set(self, key, value):',
+    '        self._data[key] = value',
+  ].join('\n');
+
+  OUT_FAIL = [
+    'collected 2 items',
+    '',
+    'tests/test_cache.py::test_cache_key_is_stable PASSED              [ 50%]',
+    'tests/test_cache.py::test_cache_isolation_between_tenants FAILED  [100%]',
+    '',
+    '=========================== FAILURES ===========================',
+    '_____________ test_cache_isolation_between_tenants _____________',
+    '',
+    '    def test_cache_isolation_between_tenants():',
+    '        cache = RetrievalCache(InMemoryStore())',
+    '        cache.put("quarterly numbers", "acme", ["d1"], ["ACME-DOC"])',
+    '>       assert cache.get("quarterly numbers", "globex", ["d1"]) is None',
+    'E       AssertionError: assert [\'ACME-DOC\'] is None',
+    '',
+    'tests/test_cache.py:14: AssertionError',
+    '=================== 1 failed, 1 passed in 0.41s ===================',
+  ].join('\n');
+
+  OUT_PASS = [
+    'collected 2 items',
+    '',
+    'tests/test_cache.py::test_cache_key_is_stable PASSED              [ 50%]',
+    'tests/test_cache.py::test_cache_isolation_between_tenants PASSED  [100%]',
+    '',
+    '======================= 2 passed in 0.39s =======================',
+  ].join('\n');
+
+  componentDidMount() {
+
+    try {
+      const tw = parseInt(localStorage.getItem('lg_taskW'), 10);
+      const cw = parseInt(localStorage.getItem('lg_coachW'), 10);
+      const patch = {};
+      if (!isNaN(tw)) patch.taskW = Math.min(460, Math.max(210, tw));
+      if (!isNaN(cw)) patch.coachW = Math.min(620, Math.max(300, cw));
+      if (Object.keys(patch).length) this.setState(patch);
+    } catch (_) {}
+  }
+
+  startDragTask = (e) => {
+    e.preventDefault();
+    const startX = e.clientX, start = this.state.taskW;
+    let latest = start;
+    const move = (ev) => { latest = Math.min(460, Math.max(210, start + (ev.clientX - startX))); this.setState({ taskW: latest }); };
+    const up = () => {
+      window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+      document.body.style.cursor = ''; document.body.style.userSelect = '';
+      try { localStorage.setItem('lg_taskW', String(latest)); } catch (_) {}
+    };
+    document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+  };
+
+  startDragCoach = (e) => {
+    e.preventDefault();
+    const startX = e.clientX, start = this.state.coachW;
+    let latest = start;
+    const move = (ev) => { latest = Math.min(620, Math.max(300, start - (ev.clientX - startX))); this.setState({ coachW: latest }); };
+    const up = () => {
+      window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+      document.body.style.cursor = ''; document.body.style.userSelect = '';
+      try { localStorage.setItem('lg_coachW', String(latest)); } catch (_) {}
+    };
+    document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+  };
+
+  // ---- syntax highlight ----
+  hl(code, dim) {
+    const KW = new Set(['def','class','return','import','from','for','in','if','else','elif','and','or','not','with','as','lambda','yield','raise','try','except','finally','while','pass','assert','async','await','is','None','True','False']);
+    const BUILTIN = new Set(['str','list','dict','int','float','bool','set','tuple','len','sorted','hashlib']);
+    const C = { kw:'#b58ac9', str:'#cBA36a'.replace('B','b'), num:'#cf9b6a', fn:'#e3c479', builtin:'#83a0c4', self:'#8c8678', com:'#5f5a50' };
+    const base = dim ? '#9a9384' : '#ddd8cd';
+    const lines = (code || '').split('\n');
+    return lines.map((line, li) => {
+      const spans = [];
+      let k = 0;
+      let codePart = line, com = '';
+      let q = null, hi = -1;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (q) { if (ch === q) q = null; }
+        else { if (ch === '"' || ch === "'") q = ch; else if (ch === '#') { hi = i; break; } }
+      }
+      if (hi >= 0) { codePart = line.slice(0, hi); com = line.slice(hi); }
+      const re = /("[^"]*"|'[^']*'|\b\d+\.?\d*\b|[A-Za-z_][A-Za-z0-9_]*|\s+|[^\sA-Za-z0-9_])/g;
+      let m, prev = '';
+      while ((m = re.exec(codePart))) {
+        const t = m[0];
+        let col = null, ital = false;
+        if (/^["']/.test(t)) col = C.str;
+        else if (/^\d/.test(t)) col = C.num;
+        else if (/^[A-Za-z_]/.test(t)) {
+          if (KW.has(t)) col = C.kw;
+          else if (t === 'self') { col = C.self; ital = true; }
+          else if (prev === 'def' || prev === 'class') col = C.fn;
+          else if (BUILTIN.has(t)) col = C.builtin;
+        }
+        spans.push(React.createElement('span', { key: k++, style: col ? { color: col, fontStyle: ital ? 'italic' : 'normal' } : { color: base } }, t));
+        if (t.trim()) prev = t;
+      }
+      if (com) spans.push(React.createElement('span', { key: k++, style: { color: C.com, fontStyle: 'italic' } }, com));
+      return React.createElement('div', { key: li, style: { minHeight: '21px', lineHeight: '21px', whiteSpace: 'pre' } }, spans.length ? spans : '\u200b');
+    });
+  }
+
+  // ---- navigation ----
+  openTopic = () => this.setState({ screen: 'topic' });
+  backToWorklist = () => this.setState({ screen: 'dashboard' });
+  toggleLog = () => this.setState(s => ({ showLog: !s.showLog }));
+
+  startCheck = () => {
+    this.setState({
+      screen: 'workspace', activeFile: 'cache.py', code: this.MUTATED,
+      phase: 'creating', running: false, runs: 0, startTs: Date.now(),
+      elapsedMin: 0, thread: [], coachInput: '',
+    });
+    setTimeout(() => { if (this.state.phase === 'creating') this.setState({ phase: 'idle' }); }, 900);
+  };
+
+  exitCheck = () => this.setState({ screen: 'topic' });
+
+  setActiveFile = (name) => () => this.setState({ activeFile: name });
+
+  onCode = (e) => {
+    const v = e.target.value;
+    this.setState(s => ({ code: v, phase: (s.phase === 'pass' || s.phase === 'fail') ? 'idle' : s.phase }));
+  };
+
+  isFixed() {
+    const m = this.state.code.match(/parts\s*=\s*\[([^\]]*)\]/);
+    return !!(m && /tenant_id/.test(m[1]));
+  }
+
+  runChecks = () => {
+    if (this.state.running) return;
+    this.setState({ running: true, phase: 'running' });
+    setTimeout(() => {
+      const pass = this.isFixed();
+      const mins = Math.max(1, Math.round((Date.now() - this.state.startTs) / 60000));
+      this.setState(s => ({ running: false, phase: pass ? 'pass' : 'fail', runs: s.runs + 1, elapsedMin: mins }));
+    }, 1100);
+  };
+
+  // ---- coach ----
+  coachReply(input) {
+    const s = (input || '').toLowerCase();
+    if (/(just tell|give me|the patch|the fix|the answer|what do i change|what should i change|fix it|solve|the solution|the code)/.test(s)) {
+      return { refusal: true, lead: "I can't hand you the patch — locating it is the exercise, and it's the part that actually builds the instinct.",
+        diagnostic: 'List every value that decides whether two cached results may be safely shared. Which of those currently goes into the cache key, and which one is missing?' };
+    }
+    if (/(supposed to|meant to|what does this code|what is this code|what's this code|purpose|intent|what is it doing|high.?level)/.test(s)) {
+      return { conceptLabel: 'Goal', concept: 'RetrievalCache reuses reranked results so repeat queries skip the vector store. The rule that makes it safe: a cached entry may only ever be served back to the same caller it was computed for.',
+        diagnostic: 'Given that rule, what has to be identical about two requests before they are allowed to share a cached result?' };
+    }
+    if (/(tenant|isolation|multi.?tenant|leak|customer)/.test(s)) {
+      return { conceptLabel: 'Concept', concept: 'Tenant isolation means one customer\u2019s data can never surface in another\u2019s session. A shared cache sits directly across that boundary: if two tenants can compute the same key, a cache hit becomes a data leak.',
+        observation: 'Compare what the test stores for the first tenant with what it reads back for the second \u2014 then look at what actually distinguishes those two calls.' };
+    }
+    if (/(cache key|the key|hashing|hash|digest|identity)/.test(s)) {
+      return { conceptLabel: 'Concept', concept: 'The cache key is the identity of a cached result. Two requests receive the same cached value exactly when they produce the same key \u2014 nothing more, nothing less.',
+        diagnostic: 'Which request attributes are folded into the key right now, and which attribute is the one that separates one tenant from another?' };
+    }
+    if (/(where|start|begin|how do i|stuck|lost|first|orient)/.test(s)) {
+      return { diagnostic: 'What is the smallest difference between the two requests in the failing test?',
+        observation: 'Print the cache key produced for each tenant\u2019s request and compare them \u2014 if they match, you\u2019ve found the boundary that\u2019s missing.' };
+    }
+    return { diagnostic: 'What does the failing assertion expect to get back, and what is it actually getting?',
+      observation: 'Trace which inputs reach the cache key for each tenant, and ask which one ought to make their keys differ.' };
+  }
+
+  pushCoach = (text) => {
+    const t = (text || '').trim();
+    if (!t) return;
+    this.setState(s => ({ thread: [...s.thread, { role: 'user', text: t }, { role: 'thinking' }], coachInput: '' }));
+    setTimeout(() => {
+      const card = this.coachReply(t);
+      this.setState(s => {
+        const th = s.thread.slice();
+        const i = th.findIndex(m => m.role === 'thinking');
+        if (i >= 0) th[i] = { role: 'coach', ...card };
+        return { thread: th };
+      });
+    }, 1200);
+  };
+
+  sendCoach = () => this.pushCoach(this.state.coachInput);
+  onCoachInput = (e) => this.setState({ coachInput: e.target.value });
+  onCoachKey = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.pushCoach(this.state.coachInput); } };
+  askChip = (q) => () => this.pushCoach(q);
+
+
+
+  completeCheck = () => {
+    const conceptAsked = this.state.thread.filter(m => m.role === 'user').length;
+    const secs = Math.max(40, Math.round((Date.now() - this.state.startTs) / 1000));
+    const mm = Math.floor(secs / 60), ss = secs % 60;
+    this.setState({
+      screen: 'topic', heroPracticed: true,
+      histStats: { elapsed: (mm > 0 ? mm + 'm ' : '') + ss + 's', runs: this.state.runs, concept: conceptAsked },
+    });
+  };
+
+  renderVals() {
+    const st = this.state;
+    const accent = this.props.accent || '#C8744D';
+    const screen = st.screen;
+
+    // ----- badge / chip css helpers -----
+    const badge = (kind) => {
+      const base = 'display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:7px;font-size:11.5px;font-weight:500;font-family:Geist,sans-serif;';
+      if (kind === 'recommended') return base + 'background:rgba(200,116,77,0.12);color:#d6a07e;border:1px solid rgba(200,116,77,0.24);';
+      if (kind === 'changed') return base + 'background:rgba(133,160,196,0.13);color:#a6bcdb;border:1px solid rgba(133,160,196,0.26);';
+      if (kind === 'practiced') return base + 'background:rgba(154,147,132,0.10);color:#9a9384;border:1px solid var(--bd2);';
+      return base;
+    };
+    const nw = 'white-space:nowrap;';
+    const chipPlain = 'white-space:nowrap;font-family:JetBrains Mono,monospace;font-size:11px;color:#9a9384;background:#201e18;border:1px solid var(--bd);padding:3px 9px;border-radius:6px;';
+    const chipRisk = 'white-space:nowrap;font-family:JetBrains Mono,monospace;font-size:11px;color:#9a9384;background:#201e18;border:1px solid var(--bd2);padding:3px 9px;border-radius:6px;';
+    const chipClaude = 'white-space:nowrap;font-family:JetBrains Mono,monospace;font-size:11px;color:#d6a07e;background:rgba(200,116,77,0.10);border:1px solid rgba(200,116,77,0.22);padding:3px 9px;border-radius:6px;';
+    const chipCodex = 'white-space:nowrap;font-family:JetBrains Mono,monospace;font-size:11px;color:#a6bcdb;background:rgba(133,160,196,0.10);border:1px solid rgba(133,160,196,0.24);padding:3px 9px;border-radius:6px;';
+    const toolChip = 'white-space:nowrap;color:#cdcabf;background:#201e18;border:1px solid var(--bd2);padding:3px 8px;border-radius:5px;';
+
+    // ----- topics -----
+    let topicsRaw = [
+      { id:'tenant', title:'Tenant isolation in document caching', badge:'recommended', badgeLabel:'Check recommended', isHero:true, expanded:true,
+        why:"It's on the retrieval path (5 callers), classed tenant-isolation \u2014 an irreversible data-exposure risk \u2014 Codex authored it, and no rationale was found in ADRs, CONTEXT, or the commit message. You've never practiced it.",
+        chips:[{label:'retrieval path · 5 callers',k:'plain'},{label:'risk: tenant-isolation',k:'risk'},{label:'⬡ Codex-authored',k:'codex'}] },
+      { id:'embed', title:'Embedding cache key composition', badge:'changed', badgeLabel:'Code changed since practice', memory:true,
+        chips:[{label:'ingest path · 4 callers',k:'plain'},{label:'practiced 18d ago',k:'plain'},{label:'✳ Claude-authored',k:'claude'}] },
+      { id:'rerank', title:'Reranker score normalization threshold', badge:'recommended', badgeLabel:'Check recommended',
+        chips:[{label:'rerank path · 3 callers',k:'plain'},{label:'risk: ranking-quality',k:'risk'},{label:'⬡ Codex-authored',k:'codex'}] },
+      { id:'retry', title:'Vector store retry & backoff policy', badge:'recommended', badgeLabel:'Check recommended',
+        chips:[{label:'query path · 6 callers',k:'plain'},{label:'risk: availability',k:'risk'}] },
+      { id:'chunk', title:'Chunk overlap window size', badge:'recommended', badgeLabel:'Check recommended',
+        chips:[{label:'ingest path · 2 callers',k:'plain'},{label:'✳ Claude-authored',k:'claude'}] },
+      { id:'hybrid', title:'Hybrid search weight (BM25 vs dense)', badge:'practiced', badgeLabel:'Practiced', faint:true,
+        chips:[{label:'query path · 4 callers',k:'plain'},{label:'risk: ranking-quality',k:'risk'}] },
+    ];
+    if (this.props.showMemoryBeat === false) topicsRaw = topicsRaw.filter(t => !t.memory);
+
+    const topics = topicsRaw.map((t, i) => ({
+      rank: String(i + 1).padStart(2, '0'),
+      title: t.title,
+      badgeLabel: t.badgeLabel,
+      badgeCss: badge(t.badge) + (t.faint ? 'opacity:0.85;' : ''),
+      isHero: !!t.isHero,
+      expanded: !!t.expanded,
+      why: t.why || '',
+      cursor: t.isHero ? 'pointer' : 'default',
+      onOpen: t.isHero ? this.openTopic : (() => {}),
+      chips: t.chips.map(c => ({ label: c.label, css: c.k === 'claude' ? chipClaude : (c.k === 'codex' ? chipCodex : (c.k === 'risk' ? chipRisk : chipPlain)) })),
+    }));
+
+    // ----- files -----
+    const fileMeta = [
+      { name:'cache.py', icon:'\u25A0', modified:true },
+      { name:'test_cache.py', icon:'\u25A1', modified:false },
+      { name:'conftest.py', icon:'\u25A1', modified:false },
+    ];
+    const files = fileMeta.map(f => ({
+      name: f.name, icon: f.icon, modified: f.modified,
+      onClick: this.setActiveFile(f.name),
+      css: 'display:flex;align-items:center;gap:8px;padding:6px 9px;margin-bottom:2px;border-radius:6px;cursor:pointer;font-family:JetBrains Mono,monospace;font-size:12px;'
+        + (st.activeFile === f.name ? 'background:var(--panel2);color:var(--tx);' : 'color:var(--mut);'),
+    }));
+
+    const activeEditable = st.activeFile === 'cache.py';
+    const roContent = st.activeFile === 'test_cache.py' ? this.TEST : (st.activeFile === 'conftest.py' ? this.CONFTEST : '');
+    const lineNos = (st.code || '').split('\n').map((_, i) => i + 1);
+    const roLineNos = roContent.split('\n').map((_, i) => i + 1);
+
+    // ----- test banner / output -----
+    const phase = st.phase;
+    let bannerLabel = '', bannerCss = '', testOutput = '';
+    const bannerBase = 'padding:9px 16px;font-family:JetBrains Mono,monospace;font-size:11.5px;font-weight:600;display:flex;align-items:center;gap:8px;';
+    if (phase === 'creating') { bannerLabel = '◴ Creating sandbox…'; bannerCss = bannerBase + 'color:var(--mut);background:#1a1813;'; testOutput = 'Provisioning temp dir, applying curated mutation, validating exactly one check fails…'; }
+    else if (phase === 'running') { bannerLabel = '◴ Running pytest…'; bannerCss = bannerBase + 'color:var(--mut);background:#1a1813;'; testOutput = st.runs > 0 ? '' : ''; }
+    else if (phase === 'fail') { bannerLabel = '✕ 1 failed · 1 passed'; bannerCss = bannerBase + 'color:var(--red);background:rgba(217,106,94,0.10);border-bottom:1px solid rgba(217,106,94,0.25);'; testOutput = this.OUT_FAIL; }
+    else if (phase === 'pass') { bannerLabel = '✓ 2 passed'; bannerCss = bannerBase + 'color:var(--green);background:rgba(95,176,126,0.10);border-bottom:1px solid rgba(95,176,126,0.25);'; testOutput = this.OUT_PASS; }
+    else { bannerLabel = 'No checks run yet'; bannerCss = bannerBase + 'color:var(--faint);background:#1a1813;'; testOutput = 'Edit ledger_rag/cache.py, then Run checks. Behavior must go green on exit code 0.'; }
+
+    const runBtnCss = 'display:inline-flex;align-items:center;gap:8px;background:'
+      + (st.running ? 'rgba(200,116,77,0.5)' : 'var(--accent)')
+      + ';color:#1c140f;border:none;border-radius:8px;padding:8px 16px;font-family:Geist,sans-serif;font-size:13px;font-weight:600;cursor:'
+      + (st.running ? 'default' : 'pointer') + ';';
+
+    // ----- coach thread -----
+    const thread = st.thread.map((m, i) => {
+      if (m.role === 'user') return { isUser: true, text: m.text };
+      if (m.role === 'thinking') return { isThinking: true };
+      const refusal = !!m.refusal;
+      return {
+        isCoach: true, refusal,
+        lead: m.lead || '',
+        conceptLabel: m.conceptLabel || 'Concept',
+        concept: m.concept || '',
+        diagnostic: m.diagnostic || '',
+        observation: m.observation || '',
+        cardCss: 'align-self:flex-start;max-width:94%;background:var(--panel);border:1px solid '
+          + (refusal ? 'rgba(200,116,77,0.4)' : 'var(--bd2)')
+          + ';border-left:3px solid ' + (refusal ? 'var(--accent)' : 'var(--bd2)')
+          + ';border-radius:4px 11px 11px 11px;padding:14px;',
+      };
+    });
+
+    const coachChips = [
+      { label: 'Just tell me what to change', onClick: this.askChip('Just tell me what I need to change.') },
+      { label: 'What is this code supposed to do?', onClick: this.askChip('What is this code supposed to do?') },
+      { label: 'Where do I start?', onClick: this.askChip('Where do I start?') },
+    ];
+
+    // ----- layout toggle css -----
+
+
+    const coachPaneCss = 'flex:none;width:' + st.coachW + 'px'
+      + ';border-left:1px solid var(--bd);background:var(--bg);display:flex;flex-direction:column;overflow:hidden;';
+
+    // ----- hero topic page state -----
+    const heroBadgeCss = st.heroPracticed ? badge('practiced') : badge('recommended');
+    const heroBadgeLabel = st.heroPracticed ? 'Practiced' : 'Check recommended';
+
+    const hs = st.histStats || { elapsed: '4m 12s', runs: 3, concept: 1 };
+    const history = [
+      { k: 'Behavior restored', v: 'Yes', color: 'var(--green)' },
+      { k: 'Elapsed', v: hs.elapsed, color: 'var(--tx)' },
+      { k: 'Check runs', v: String(hs.runs), color: 'var(--tx)' },
+      { k: 'Concept help used', v: hs.concept + (hs.concept === 1 ? ' question' : ' questions'), color: 'var(--tx)' },
+      { k: 'Direct solution given', v: 'No', color: 'var(--accent)' },
+      { k: 'Code snapshot', v: '3f9a2c1', color: 'var(--mut)' },
+    ];
+
+    const codexLog = [
+      '{"type":"message","role":"user","content":"add a cache in front of',
+      '  the reranker so repeat queries don\'t re-hit the vector store"}',
+      '{"type":"reasoning","summary":"Cache reranked results keyed by',
+      '  query + tenant + document set so hits stay within a caller."}',
+      '{"type":"function_call","name":"shell",',
+      '  "arguments":{"command":["bash","-lc","cat ledger_rag/cache.py"]}}',
+      '{"type":"function_call","name":"apply_patch","arguments":{"input":',
+      '  "*** Update File: ledger_rag/cache.py',
+      '   + parts = [query, tenant_id, *sorted(doc_ids)]"}}',
+      '{"type":"function_call","name":"shell",',
+      '  "arguments":{"command":["pytest","-q"]}}',
+      '{"type":"function_call_output","output":"2 passed in 0.41s"}',
+      '{"type":"token_count","info":{"total":18422}}',
+    ].join('\n');
+
+    return {
+      accent,
+      showRail: screen !== 'workspace',
+      isDashboard: screen === 'dashboard',
+      isTopic: screen === 'topic',
+      isWorkspace: screen === 'workspace',
+      crumbTopic: screen === 'topic' ? 'Tenant isolation' : (screen === 'workspace' ? 'Tenant isolation › check' : ''),
+      railTopicCount: String(topics.length),
+
+      topics,
+
+      // topic page
+      heroBadgeCss, heroBadgeLabel,
+      heroPracticed: st.heroPracticed,
+      heroCta: this.startCheck,
+      heroCtaLabel: st.heroPracticed ? 'Practice again' : 'Start check',
+      committedHighlight: this.hl(this.COMMITTED, false),
+      chipPlainCss: chipPlain, chipRiskCss: chipRisk, chipClaudeCss: chipClaude, chipCodexCss: chipCodex, toolChipCss: toolChip,
+      showLog: st.showLog,
+      toggleLog: this.toggleLog,
+      logToggleLabel: st.showLog ? 'Hide session log' : 'View session log →',
+      codexLog,
+      history,
+      backToWorklist: this.backToWorklist,
+
+      // workspace
+      exitCheck: this.exitCheck,
+      statsLabel: st.runs + (st.runs === 1 ? ' run' : ' runs') + ' · ' + st.elapsedMin + 'm',
+      files,
+      activeFile: st.activeFile,
+      activeEditable,
+      activeReadOnly: !activeEditable,
+      code: st.code,
+      onCode: this.onCode,
+      editorHighlight: this.hl(st.code, false),
+      roHighlight: this.hl(roContent, true),
+      lineNos, roLineNos,
+      running: st.running,
+      runChecks: this.runChecks,
+      runLabel: st.running ? 'Running…' : 'Run checks',
+      runBtnCss,
+      bannerLabel, bannerCss, testOutput,
+      coachPaneCss,
+      taskWpx: st.taskW + 'px',
+      dragTask: this.startDragTask,
+      dragCoach: this.startDragCoach,
+      thread,
+      coachChips,
+      coachInput: st.coachInput,
+      onCoachInput: this.onCoachInput,
+      onCoachKey: this.onCoachKey,
+      sendCoach: this.sendCoach,
+      canComplete: phase === 'pass',
+      completeCheck: this.completeCheck,
+    };
+  }
+}
+</script>
+</body>
+</html>
