@@ -15,15 +15,12 @@ dev = [
 ]
 
 [tool.setuptools]
-package-dir = {"" = "app"}
+packages = ["backend"]
 include-package-data = true
 
-[tool.setuptools.packages.find]
-where = ["app"]
-
 [tool.setuptools.package-data]
-ledger_backend = ["fixtures/hero_repo/**/*.py"]
+backend = ["fixtures/hero_repo/**/*.py"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["app"]
+testpaths = ["backend/tests"]
+pythonpath = ["."]

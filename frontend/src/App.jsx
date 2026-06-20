@@ -378,7 +378,7 @@ export default function App() {
             <span style={{ color: 'var(--faint)' }}>{loadError}</span>
             <br />
             <br />
-            Start it with <span style={{ color: 'var(--tx)' }}>uvicorn ledger_backend.api:app --port 8000</span>.
+            Start it with <span style={{ color: 'var(--tx)' }}>uvicorn backend.api:app --port 8000</span>.
           </CenterNote>
         )}
 

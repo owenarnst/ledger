@@ -1,10 +1,10 @@
 import json
 
-from ledger_backend.__main__ import main
-from ledger_backend.api import create_app
-from ledger_backend.hooks import HookSpool, build_session_start_nudge, reset_ledger
-from ledger_backend.ingestion import ClaudeCodeAdapter, CodexAdapter
-from ledger_backend.repository import LedgerRepository
+from backend.__main__ import main
+from backend.api import create_app
+from backend.hooks import HookSpool, build_session_start_nudge, reset_ledger
+from backend.ingestion import ClaudeCodeAdapter, CodexAdapter
+from backend.repository import LedgerRepository
 
 
 def test_complete_check_persists_reflection_history(tmp_path):
@@ -45,7 +45,7 @@ def test_run_check_records_graceful_failure_when_runner_errors(tmp_path, monkeyp
     def broken_runner(_sandbox_path):
         raise RuntimeError("pytest executable disappeared")
 
-    monkeypatch.setattr("ledger_backend.repository.run_pytest", broken_runner)
+    monkeypatch.setattr("backend.repository.run_pytest", broken_runner)
 
     result = repo.run_check(check["id"])
 
