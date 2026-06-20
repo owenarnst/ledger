@@ -25,5 +25,5 @@ A partner **hour-0 feasibility spike** gates the Codex track, mirroring the on-m
 
 ## Consequences
 
-- `docs/planning/product.md:347` needs reconciliation: provider-agnostic is no longer purely roadmap — *ingestion* is now in scope for two providers.
+- `docs/planning/product.md:347` needs reconciliation: provider-agnostic is no longer purely roadmap — *ingestion* is now in scope for two providers. _(Reconciled 2026-06-20: roadmap bullet amended, substrate note cross-referenced, and a Log entry added — see product.md Log 2026-06-20.)_
 - "Support both providers" honestly means **ingestion parity + provider-labeled provenance**, not Coach/nudge parity. Disclose this distinction if a judge probes.

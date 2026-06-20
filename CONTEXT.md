@@ -43,7 +43,11 @@ The personal "do *you* own it" axis — decay state (`never checked → practice
 _Avoid_: transcript-engagement (a dead signal — see Flagged ambiguities).
 
 **AI-authorship**:
-A binary provenance fact from the receipt: did an agent author/touch this decision. A ranking booster, never a gate, never a validation input.
+A binary provenance fact from the **Receipt**: did an agent author/touch this decision. A ranking booster, never a gate, never a validation input.
+
+**Receipt**:
+The provider-labeled view of the conversation **Evidence** that authored or last touched a **Decision anchor** — proof of **AI-authorship**, anchored to the code and the commit where it landed. Progressively discloses the grounded layers (L1 collapsed provenance summary → L2 expanded prompt + tool-call hunk → L3 raw source record); it renders what the trace contains and never asserts a reasoning trail (the thinness is _visible_, not _computed_). Provider-blind in layout; layers absent from a Provider's logs are simply hidden.
+_Avoid_: anchoring on a tuned magic number (a threshold's "why" is "I tried values" — not a defendable decision).
 
 ## Relationships
 
@@ -52,6 +56,7 @@ A binary provenance fact from the receipt: did an agent author/touch this decisi
 - A **Topic** is grounded in **Evidence**; conversation Evidence comes from a **Provider** via that Provider's **Provider adapter**.
 - Ranking = a gate (load-bearing ∧ untrailed) then **Blast radius** + **Ownership thinness**; **AI-authorship** boosts, never gates.
 - **Concepts** are derived from multiple Topics and always retain links back to them.
+- A **Topic**'s **Receipt** renders the conversation **Evidence** for its **Decision anchor**; **AI-authorship** is read off the Receipt. The Receipt is provenance display only — never a validation input.
 
 ## Example dialogue
 
