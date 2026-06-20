@@ -209,7 +209,7 @@ def create_app(
             spool_dir=Path(payload.spool_dir) if payload and payload.spool_dir else DEFAULT_SPOOL_DIR,
         )
 
-    dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    dist = Path(__file__).resolve().parents[1] / "frontend" / "dist"
     if dist.exists():
         app.mount("/", StaticFiles(directory=dist, html=True), name="static")
 

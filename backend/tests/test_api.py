@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from ledger_backend.api import create_app
+from backend.api import create_app
 
 
 def test_api_exposes_project_topic_and_check_flow(tmp_path):

@@ -1,4 +1,4 @@
-from ledger_backend.coach import ClaudeCoach, CodexCoach, create_coach
+from backend.coach import ClaudeCoach, CodexCoach, create_coach
 
 
 def test_claude_coach_uses_claude_code_with_tools_denied():

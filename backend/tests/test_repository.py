@@ -1,6 +1,6 @@
-from ledger_backend.db import connect, initialize_schema
-from ledger_backend.repository import LedgerRepository
-from ledger_backend.ingestion import ClaudeCodeAdapter, CodexAdapter
+from backend.db import connect, initialize_schema
+from backend.repository import LedgerRepository
+from backend.ingestion import ClaudeCodeAdapter, CodexAdapter
 
 
 def test_repository_seeds_demo_project_and_topics(tmp_path):
