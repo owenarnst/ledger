@@ -1,17 +1,13 @@
 // Issue #15 — Check workspace. 3-pane: Task (resizable) | Sandbox (file tree +
-// editor overlay + run bar + output) | Coach (resizable, Claude-only). The run
-// verdict is driven by the banner state; exit code is the oracle (mocked here).
+// editor overlay + run bar + output) | Coach (resizable, Claude-only). Files,
+// run verdict, and coaching are all live from the backend. The verdict comes
+// from the run's `passed` field — pytest's exit code is the oracle; the UI never
+// parses the test text for the result.
 import React from 'react'
 import { hl } from '../highlight.jsx'
-import { TEST, CONFTEST, OUT_FAIL, OUT_PASS } from '../fixtures.js'
+import { renderCoach } from '../coachmd.jsx'
 
 const mono = "'JetBrains Mono', monospace"
-
-const FILE_META = [
-  { name: 'cache.py', icon: '■', modified: true },
-  { name: 'test_cache.py', icon: '□', modified: false },
-  { name: 'conftest.py', icon: '□', modified: false },
-]
 
 const COACH_CHIPS = [
   { label: 'Just tell me what to change', q: 'Just tell me what I need to change.' },
@@ -19,55 +15,58 @@ const COACH_CHIPS = [
   { label: 'Where do I start?', q: 'Where do I start?' },
 ]
 
-function banner(phase, runs) {
-  const base = {
-    padding: '9px 16px',
-    fontFamily: mono,
-    fontSize: 11.5,
-    fontWeight: 600,
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-  }
+const WITHHELD = /cannot provide (?:code|a patch)|can't (?:hand|give) you the patch|cannot give you the patch/i
+
+function banner(phase, runOutput, targetFile, testCommand) {
+  const base = { padding: '9px 16px', fontFamily: mono, fontSize: 11.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }
   if (phase === 'creating')
     return {
       label: '◴ Creating sandbox…',
       css: { ...base, color: 'var(--mut)', background: '#1a1813' },
-      out: 'Provisioning temp dir, applying curated mutation, validating exactly one check fails…',
+      out: 'Provisioning temp dir, applying curated mutation, validating the check fails…',
     }
-  if (phase === 'running')
-    return { label: '◴ Running pytest…', css: { ...base, color: 'var(--mut)', background: '#1a1813' }, out: '' }
+  if (phase === 'running') return { label: '◴ Running pytest…', css: { ...base, color: 'var(--mut)', background: '#1a1813' }, out: runOutput || '' }
   if (phase === 'fail')
     return {
-      label: '✕ 1 failed · 1 passed',
+      label: '✕ check failed',
       css: { ...base, color: 'var(--red)', background: 'rgba(217,106,94,0.10)', borderBottom: '1px solid rgba(217,106,94,0.25)' },
-      out: OUT_FAIL,
+      out: runOutput,
     }
   if (phase === 'pass')
     return {
-      label: '✓ 2 passed',
+      label: '✓ check passed',
       css: { ...base, color: 'var(--green)', background: 'rgba(95,176,126,0.10)', borderBottom: '1px solid rgba(95,176,126,0.25)' },
-      out: OUT_PASS,
+      out: runOutput,
+    }
+  if (phase === 'error')
+    return {
+      label: '⚠ runner error',
+      css: { ...base, color: 'var(--red)', background: 'rgba(217,106,94,0.10)', borderBottom: '1px solid rgba(217,106,94,0.25)' },
+      out: runOutput,
     }
   return {
     label: 'No checks run yet',
     css: { ...base, color: 'var(--faint)', background: '#1a1813' },
-    out: 'Edit ledger_rag/cache.py, then Run checks. Behavior must go green on exit code 0.',
+    out: `Edit ${targetFile || 'the target file'}, then Run checks. Behavior must go green on exit code 0.`,
   }
 }
 
 export default function Workspace({
+  topic,
+  check,
   taskW,
   coachW,
   dragTask,
   dragCoach,
+  files,
   activeFile,
   setActiveFile,
   code,
+  roContent,
   onCode,
   phase,
   running,
-  runs,
+  runOutput,
   runChecks,
   thread,
   coachInput,
@@ -78,11 +77,18 @@ export default function Workspace({
   canComplete,
   completeCheck,
 }) {
-  const editable = activeFile === 'cache.py'
-  const roContent = activeFile === 'test_cache.py' ? TEST : activeFile === 'conftest.py' ? CONFTEST : ''
+  const targetFile = check?.target_file
+  const af = (files || []).find((f) => f.path === activeFile)
+  const editable = !!af?.editable
+  const roText = editable ? '' : roContent[activeFile] || ''
   const lineNos = (code || '').split('\n').map((_, i) => i + 1)
-  const roLineNos = roContent.split('\n').map((_, i) => i + 1)
-  const b = banner(phase, runs)
+  const roLineNos = roText.split('\n').map((_, i) => i + 1)
+  const b = banner(phase, runOutput, targetFile, check?.test_command)
+
+  const testFile = (files || []).find((f) => !f.editable)
+  const testContent = testFile ? roContent[testFile.path] || '' : ''
+  const failingTest = (testContent.match(/def\s+(test_\w+)/) || [])[1] || (testFile ? testFile.name : '—')
+  const invariant = topic?.current_revision?.invariant
 
   const runBtnStyle = {
     display: 'inline-flex',
@@ -98,20 +104,14 @@ export default function Workspace({
     fontWeight: 600,
     cursor: running ? 'default' : 'pointer',
   }
-
   const resizeStyle = { width: 8, flex: 'none', margin: '0 -4px', zIndex: 6, cursor: 'col-resize', background: 'transparent' }
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
         {/* TASK */}
-        <div
-          className="lg-scroll"
-          style={{ width: taskW, flex: 'none', borderRight: '1px solid var(--bd)', background: 'var(--panel)', overflow: 'auto', padding: '18px' }}
-        >
-          <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--faint)', marginBottom: 14 }}>
-            Task
-          </div>
+        <div className="lg-scroll" style={{ width: taskW, flex: 'none', borderRight: '1px solid var(--bd)', background: 'var(--panel)', overflow: 'auto', padding: '18px' }}>
+          <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--faint)', marginBottom: 14 }}>Task</div>
           <div
             style={{
               display: 'inline-flex',
@@ -119,33 +119,28 @@ export default function Workspace({
               gap: 6,
               fontFamily: mono,
               fontSize: 10.5,
-              color: 'var(--red)',
-              border: '1px solid rgba(217,106,94,0.3)',
-              background: 'rgba(217,106,94,0.08)',
+              color: phase === 'pass' ? 'var(--green)' : 'var(--red)',
+              border: `1px solid ${phase === 'pass' ? 'rgba(95,176,126,0.3)' : 'rgba(217,106,94,0.3)'}`,
+              background: phase === 'pass' ? 'rgba(95,176,126,0.08)' : 'rgba(217,106,94,0.08)',
               padding: '3px 8px',
               borderRadius: 5,
               marginBottom: 14,
             }}
           >
-            ● behavior failing
+            ● {phase === 'pass' ? 'behavior restored' : 'behavior failing'}
           </div>
-          <h2 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 10px', letterSpacing: '-0.01em' }}>Cross-tenant cache leak</h2>
-          <p style={{ fontSize: 13, color: 'var(--mut)', lineHeight: 1.6, margin: '0 0 16px' }}>
-            RetrievalCache is serving one tenant's documents to another. When two tenants issue the same query over the
-            same document set, the second caller receives the first caller's cached results.
-          </p>
+          <h2 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 10px', letterSpacing: '-0.01em' }}>{topic?.title || 'Ownership check'}</h2>
+          <p style={{ fontSize: 13, color: 'var(--mut)', lineHeight: 1.6, margin: '0 0 16px' }}>{topic?.summary}</p>
           <div style={{ borderTop: '1px solid var(--bd)', paddingTop: 14 }}>
             <div style={{ fontSize: 11, color: 'var(--faint)', marginBottom: 6 }}>Failing test</div>
-            <div style={{ fontFamily: mono, fontSize: 11.5, color: 'var(--tx)', wordBreak: 'break-all' }}>
-              test_cache_isolation_<wbr />between_tenants
-            </div>
+            <div style={{ fontFamily: mono, fontSize: 11.5, color: 'var(--tx)', wordBreak: 'break-all' }}>{failingTest}</div>
           </div>
-          <div style={{ borderTop: '1px solid var(--bd)', paddingTop: 14, marginTop: 14 }}>
-            <div style={{ fontSize: 11, color: 'var(--faint)', marginBottom: 6 }}>Invariant to restore</div>
-            <div style={{ fontSize: 12.5, color: 'var(--mut)', lineHeight: 1.55 }}>
-              Each tenant must only ever receive results computed for that tenant.
+          {invariant && (
+            <div style={{ borderTop: '1px solid var(--bd)', paddingTop: 14, marginTop: 14 }}>
+              <div style={{ fontSize: 11, color: 'var(--faint)', marginBottom: 6 }}>Invariant to restore</div>
+              <div style={{ fontSize: 12.5, color: 'var(--mut)', lineHeight: 1.55 }}>{invariant}</div>
             </div>
-          </div>
+          )}
         </div>
         <div className="lg-resize" onMouseDown={dragTask} title="Drag to resize" style={resizeStyle} />
 
@@ -153,14 +148,13 @@ export default function Workspace({
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
           <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
             {/* file tree */}
-            <div style={{ width: 172, flex: 'none', borderRight: '1px solid var(--bd)', background: 'var(--panel)', padding: '12px 8px', overflow: 'auto' }}>
-              <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--faint)', padding: '4px 8px 10px' }}>
-                Sandbox
-              </div>
-              {FILE_META.map((f) => (
+            <div style={{ width: 184, flex: 'none', borderRight: '1px solid var(--bd)', background: 'var(--panel)', padding: '12px 8px', overflow: 'auto' }}>
+              <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--faint)', padding: '4px 8px 10px' }}>Sandbox</div>
+              {(files || []).map((f) => (
                 <div
-                  key={f.name}
-                  onClick={() => setActiveFile(f.name)}
+                  key={f.path}
+                  onClick={() => setActiveFile(f.path)}
+                  title={f.path}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -171,10 +165,10 @@ export default function Workspace({
                     cursor: 'pointer',
                     fontFamily: mono,
                     fontSize: 12,
-                    ...(activeFile === f.name ? { background: 'var(--panel2)', color: 'var(--tx)' } : { color: 'var(--mut)' }),
+                    ...(activeFile === f.path ? { background: 'var(--panel2)', color: 'var(--tx)' } : { color: 'var(--mut)' }),
                   }}
                 >
-                  <span style={{ opacity: 0.7 }}>{f.icon}</span>
+                  <span style={{ opacity: 0.7 }}>{f.editable ? '■' : '□'}</span>
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
                   {f.modified && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', flex: 'none' }} />}
                 </div>
@@ -185,11 +179,9 @@ export default function Workspace({
             <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               <div style={{ flex: 'none', height: 38, borderBottom: '1px solid var(--bd)', background: 'var(--panel)', display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', fontFamily: mono, fontSize: 11.5, color: 'var(--mut)' }}>
                 <span style={{ opacity: 0.7 }}>▾</span>
-                {activeFile}
-                {!editable && (
-                  <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--faint)', border: '1px solid var(--bd2)', padding: '1px 6px', borderRadius: 4 }}>
-                    read-only
-                  </span>
+                {af?.name || activeFile || '—'}
+                {!editable && activeFile && (
+                  <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--faint)', border: '1px solid var(--bd2)', padding: '1px 6px', borderRadius: 4 }}>read-only</span>
                 )}
               </div>
 
@@ -203,9 +195,7 @@ export default function Workspace({
                     ))}
                   </div>
                   <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
-                    <pre style={{ margin: 0, padding: '14px 16px', fontFamily: mono, fontSize: 13, lineHeight: '21px', whiteSpace: 'pre', pointerEvents: 'none', minHeight: '100%' }}>
-                      {hl(code, false)}
-                    </pre>
+                    <pre style={{ margin: 0, padding: '14px 16px', fontFamily: mono, fontSize: 13, lineHeight: '21px', whiteSpace: 'pre', pointerEvents: 'none', minHeight: '100%' }}>{hl(code, false)}</pre>
                     <textarea
                       spellCheck="false"
                       value={code}
@@ -240,29 +230,23 @@ export default function Workspace({
                       </div>
                     ))}
                   </div>
-                  <pre style={{ margin: 0, padding: '14px 16px', fontFamily: mono, fontSize: 13, lineHeight: '21px', whiteSpace: 'pre', color: 'var(--mut)' }}>
-                    {hl(roContent, true)}
-                  </pre>
+                  <pre style={{ margin: 0, padding: '14px 16px', fontFamily: mono, fontSize: 13, lineHeight: '21px', whiteSpace: 'pre', color: 'var(--mut)' }}>{hl(roText, true)}</pre>
                 </div>
               )}
 
               {/* run bar */}
               <div style={{ flex: 'none', borderTop: '1px solid var(--bd)', background: 'var(--panel)', padding: '11px 16px', display: 'flex', alignItems: 'center', gap: 14 }}>
-                <button onClick={runChecks} style={runBtnStyle}>
-                  {running && (
-                    <span style={{ width: 11, height: 11, border: '2px solid rgba(28,20,15,0.35)', borderTopColor: '#1c140f', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />
-                  )}
+                <button onClick={runChecks} disabled={running} style={runBtnStyle}>
+                  {running && <span style={{ width: 11, height: 11, border: '2px solid rgba(28,20,15,0.35)', borderTopColor: '#1c140f', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />}
                   {running ? 'Running…' : 'Run checks'}
                 </button>
-                <div style={{ fontFamily: mono, fontSize: 11.5, color: 'var(--faint)' }}>exit code is the oracle · pytest -q</div>
+                <div style={{ fontFamily: mono, fontSize: 11.5, color: 'var(--faint)' }}>exit code is the oracle · {check?.test_command || 'pytest'}</div>
               </div>
 
               {/* output */}
               <div className="lg-scroll" style={{ flex: 'none', height: 200, borderTop: '1px solid var(--bd)', background: '#121110', overflow: 'auto' }}>
                 <div style={b.css}>{b.label}</div>
-                <pre style={{ margin: 0, padding: '12px 16px', fontFamily: mono, fontSize: 11.5, lineHeight: 1.65, color: 'var(--mut)', whiteSpace: 'pre-wrap' }}>
-                  {b.out}
-                </pre>
+                <pre style={{ margin: 0, padding: '12px 16px', fontFamily: mono, fontSize: 11.5, lineHeight: 1.65, color: 'var(--mut)', whiteSpace: 'pre-wrap' }}>{b.out}</pre>
               </div>
             </div>
           </div>
@@ -275,13 +259,9 @@ export default function Workspace({
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' }} />
               <div style={{ fontSize: 13, fontWeight: 600 }}>Coach</div>
-              <span style={{ marginLeft: 'auto', fontFamily: mono, fontSize: 10, color: 'var(--faint)', border: '1px solid var(--bd2)', padding: '2px 7px', borderRadius: 5 }}>
-                claude -p · tools denied
-              </span>
+              <span style={{ marginLeft: 'auto', fontFamily: mono, fontSize: 10, color: 'var(--faint)', border: '1px solid var(--bd2)', padding: '2px 7px', borderRadius: 5 }}>claude -p · tools denied</span>
             </div>
-            <div style={{ fontSize: 11.5, color: 'var(--mut)', marginTop: 6 }}>
-              Conceptual help only. The coach can't see your code or the fix — by design.
-            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--mut)', marginTop: 6 }}>Conceptual help only. The coach can't see your code or the fix — by design.</div>
           </div>
 
           <div className="lg-scroll" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -300,7 +280,7 @@ export default function Workspace({
                     <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--mut)', animation: 'blink 1.2s infinite 0.4s' }} />
                   </div>
                 )
-              const refusal = !!m.refusal
+              const refusal = WITHHELD.test(m.text || '')
               return (
                 <div
                   key={i}
@@ -321,31 +301,7 @@ export default function Workspace({
                       </span>
                     </div>
                   )}
-                  {refusal && m.lead && <div style={{ fontSize: 13, color: 'var(--tx)', lineHeight: 1.55, marginBottom: 13 }}>{m.lead}</div>}
-                  {m.concept && (
-                    <div style={{ marginBottom: 12 }}>
-                      <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 5 }}>
-                        {m.conceptLabel || 'Concept'}
-                      </div>
-                      <div style={{ fontSize: 13, color: 'var(--tx)', lineHeight: 1.55 }}>{m.concept}</div>
-                    </div>
-                  )}
-                  {m.diagnostic && (
-                    <div style={{ marginBottom: 12 }}>
-                      <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--cool)', marginBottom: 5 }}>
-                        Diagnostic question
-                      </div>
-                      <div style={{ fontSize: 13, color: 'var(--tx)', lineHeight: 1.55 }}>{m.diagnostic}</div>
-                    </div>
-                  )}
-                  {m.observation && (
-                    <div>
-                      <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--mut)', marginBottom: 5 }}>
-                        Suggested observation
-                      </div>
-                      <div style={{ fontSize: 13, color: 'var(--mut)', lineHeight: 1.55 }}>{m.observation}</div>
-                    </div>
-                  )}
+                  {renderCoach(m.text)}
                 </div>
               )
             })}

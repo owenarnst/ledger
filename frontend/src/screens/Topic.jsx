@@ -1,33 +1,30 @@
-// Issue #7 — Topic page, two states. Pre-check: Code reality (left) + Authoring
-// receipt (right, L1 header / L2 prompt+tool-chips+summary / L3 raw session log).
-// Post-check: Practice history. Receipt is provider-labeled (Codex for the hero).
+// Issue #7 — Topic page, two states. Pre-check: Code reality (left, grounded in
+// the `code` evidence + revision invariant) + Authoring receipt (right, L1 header
+// / L2 tool-chips + summary / L3 imported session record). Post-check: Practice
+// history. Everything is provider-labeled from the backend evidence — the hero
+// is Claude-authored here (ADR-0001 spine), not the design's placeholder Codex.
 import React from 'react'
-import { badge, chipPlain, chipRisk, chipCodex, toolChip } from '../theme.js'
-import { hl } from '../highlight.jsx'
-import { COMMITTED, CODEX_LOG } from '../fixtures.js'
+import { badge, chipPlain, chipRisk, toolChip, chipForKind } from '../theme.js'
+import { deriveReceipt, riskLabel } from '../adapt.js'
 
 const mono = "'JetBrains Mono', monospace"
 
-export default function Topic({
-  heroPracticed,
-  histStats,
-  showLog,
-  onToggleLog,
-  onStartCheck,
-  onBack,
-}) {
+export default function Topic({ detail, heroPracticed, histStats, showLog, onToggleLog, onStartCheck, onBack }) {
+  const r = deriveReceipt(detail)
+  const canCheck = !!detail.current_revision
   const heroBadgeCss = heroPracticed ? badge('practiced') : badge('recommended')
   const heroBadgeLabel = heroPracticed ? 'Practiced' : 'Check recommended'
   const heroCtaLabel = heroPracticed ? 'Practice again' : 'Start check'
+  const callers = `${detail.caller_count} ${detail.caller_count === 1 ? 'caller' : 'callers'}`
 
-  const hs = histStats || { elapsed: '4m 12s', runs: 3, concept: 1 }
+  const hs = histStats || { elapsed: '—', runs: 0, concept: 0 }
   const history = [
     { k: 'Behavior restored', v: 'Yes', color: 'var(--green)' },
     { k: 'Elapsed', v: hs.elapsed, color: 'var(--tx)' },
     { k: 'Check runs', v: String(hs.runs), color: 'var(--tx)' },
     { k: 'Concept help used', v: hs.concept + (hs.concept === 1 ? ' question' : ' questions'), color: 'var(--tx)' },
     { k: 'Direct solution given', v: 'No', color: 'var(--accent)' },
-    { k: 'Code snapshot', v: '3f9a2c1', color: 'var(--mut)' },
+    { k: 'Code snapshot', v: detail.current_revision?.commit_sha || '—', color: 'var(--mut)' },
   ]
 
   return (
@@ -36,15 +33,7 @@ export default function Topic({
         <div
           className="lg-hover-link"
           onClick={onBack}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            color: 'var(--mut)',
-            fontSize: 13,
-            cursor: 'pointer',
-            marginBottom: 20,
-          }}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--mut)', fontSize: 13, cursor: 'pointer', marginBottom: 20 }}
         >
           ← Worklist
         </div>
@@ -52,9 +41,7 @@ export default function Topic({
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, marginBottom: 8 }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <h1 style={{ fontSize: 24, fontWeight: 600, letterSpacing: '-0.02em', margin: 0 }}>
-                Tenant isolation in document caching
-              </h1>
+              <h1 style={{ fontSize: 24, fontWeight: 600, letterSpacing: '-0.02em', margin: 0 }}>{detail.title}</h1>
               <span style={heroBadgeCss}>{heroBadgeLabel}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 11, color: 'var(--accent)', fontSize: 14, fontWeight: 500 }}>
@@ -66,28 +53,34 @@ export default function Topic({
             </div>
           </div>
           <button
-            onClick={onStartCheck}
+            onClick={canCheck ? onStartCheck : undefined}
+            disabled={!canCheck}
             style={{
               flex: 'none',
-              background: 'var(--accent)',
-              color: '#1c140f',
-              border: 'none',
+              background: canCheck ? 'var(--accent)' : 'var(--panel2)',
+              color: canCheck ? '#1c140f' : 'var(--faint)',
+              border: canCheck ? 'none' : '1px solid var(--bd2)',
               borderRadius: 9,
               padding: '11px 20px',
               fontFamily: "'Geist', sans-serif",
               fontSize: 14,
               fontWeight: 600,
-              cursor: 'pointer',
-              boxShadow: '0 1px 0 rgba(0,0,0,0.2)',
+              cursor: canCheck ? 'pointer' : 'not-allowed',
+              boxShadow: canCheck ? '0 1px 0 rgba(0,0,0,0.2)' : 'none',
             }}
           >
-            {heroCtaLabel}
+            {canCheck ? heroCtaLabel : 'No sandbox available'}
           </button>
         </div>
 
         <div style={{ fontSize: 13.5, color: 'var(--mut)', marginBottom: 26, maxWidth: 680 }}>
-          This decision is load-bearing and has no reasoning trail. Ledger isn't claiming you don't understand it — it's
-          offering to test whether you can still operate it.
+          {detail.summary}
+          {r.trail && (
+            <>
+              {' '}
+              Ledger isn’t claiming you don’t understand it — it’s offering to test whether you can still operate it.
+            </>
+          )}
         </div>
 
         {/* 2-col body */}
@@ -96,25 +89,38 @@ export default function Topic({
           <div style={{ border: '1px solid var(--bd)', borderRadius: 12, background: 'var(--panel)', overflow: 'hidden' }}>
             <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--bd)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.01em' }}>Code reality</div>
-              <div style={{ fontFamily: mono, fontSize: 11.5, color: 'var(--mut)' }}>ledger_rag/cache.py</div>
+              <div style={{ fontFamily: mono, fontSize: 11.5, color: 'var(--mut)' }}>{r.codePath}</div>
             </div>
             <div style={{ padding: '13px 18px', borderBottom: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 12, color: 'var(--faint)', marginRight: 2 }}>Why load-bearing</span>
-              <span style={chipPlain}>retrieval path</span>
-              <span style={chipPlain}>5 callers</span>
-              <span style={chipRisk}>risk: tenant-isolation</span>
+              <span style={chipPlain}>{callers}</span>
+              <span style={chipRisk}>risk: {riskLabel(detail.risk_class)}</span>
             </div>
-            <div
-              className="lg-scroll"
-              style={{ background: '#141310', padding: '16px 18px', overflow: 'auto', fontFamily: mono, fontSize: 13, lineHeight: '21px', color: 'var(--tx)' }}
-            >
-              {hl(COMMITTED, false)}
-            </div>
-            <div style={{ padding: '13px 18px', borderTop: '1px solid var(--bd)', fontSize: 12.5, color: 'var(--mut)', lineHeight: 1.55 }}>
-              If two tenants issue the same query over overlapping document IDs, a cache key that omits{' '}
-              <span style={{ fontFamily: mono, color: 'var(--tx)', fontSize: 12 }}>tenant_id</span> can return one
-              tenant's results to another.
-            </div>
+            {r.code && (
+              <div style={{ padding: '15px 18px', borderBottom: '1px solid var(--bd)' }}>
+                <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--faint)', marginBottom: 7 }}>
+                  Behavior in tree
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--tx)', lineHeight: 1.6 }}>{r.code.body}</div>
+              </div>
+            )}
+            {r.invariant && (
+              <div style={{ padding: '15px 18px' }}>
+                <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 7 }}>
+                  Invariant to hold
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--tx)', lineHeight: 1.6 }}>{r.invariant}</div>
+              </div>
+            )}
+            {r.trail && (
+              <div style={{ padding: '12px 18px', borderTop: '1px solid var(--bd)', fontSize: 12.5, color: 'var(--mut)', lineHeight: 1.55, display: 'flex', gap: 8 }}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ flex: 'none', marginTop: 2 }}>
+                  <circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.3" />
+                  <path d="m10.5 10.5 2.5 2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                </svg>
+                <span>{r.trail.body}</span>
+              </div>
+            )}
           </div>
 
           {/* right stack: authoring receipt */}
@@ -122,7 +128,7 @@ export default function Topic({
             <div style={{ border: '1px solid var(--bd)', borderRadius: 12, background: 'var(--panel)', overflow: 'hidden' }}>
               <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>Authoring receipt</div>
-                <span style={chipCodex}>⬡ Codex</span>
+                <span style={chipForKind(r.providerChipKind)}>{r.providerLabel}</span>
                 <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, fontFamily: mono, fontSize: 10, color: 'var(--faint)' }}>
                   <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
                     <path d="M4 7V5a4 4 0 0 1 8 0v2" stroke="currentColor" strokeWidth="1.3" />
@@ -131,50 +137,59 @@ export default function Topic({
                   imported from logs
                 </span>
               </div>
-              <div style={{ padding: '13px 16px', borderBottom: '1px solid var(--bd)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontFamily: mono, fontSize: 11 }}>
-                  <span style={toolChip}>read cache.py</span>
-                  <span style={{ color: 'var(--faint)' }}>→</span>
-                  <span style={toolChip}>apply_patch</span>
-                  <span style={{ color: 'var(--faint)' }}>→</span>
-                  <span style={toolChip}>shell pytest -q</span>
-                </div>
-              </div>
-              <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <div style={{ fontFamily: mono, fontSize: 10, color: 'var(--faint)', paddingTop: 3, flex: 'none', width: 40 }}>you</div>
-                  <div style={{ fontSize: 12.5, color: 'var(--mut)', lineHeight: 1.5 }}>
-                    add a cache in front of the reranker so repeat queries don't re-hit the vector store
+
+              {r.toolSequence.length > 0 && (
+                <div style={{ padding: '13px 16px', borderBottom: '1px solid var(--bd)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontFamily: mono, fontSize: 11 }}>
+                    {r.toolSequence.map((tool, i) => (
+                      <React.Fragment key={i}>
+                        {i > 0 && <span style={{ color: 'var(--faint)' }}>→</span>}
+                        <span style={toolChip}>{tool}</span>
+                      </React.Fragment>
+                    ))}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <div style={{ fontFamily: mono, fontSize: 10, color: 'var(--accent)', paddingTop: 3, flex: 'none', width: 40 }}>codex</div>
-                  <div style={{ fontSize: 12.5, color: 'var(--tx)', lineHeight: 1.5 }}>
-                    Adding a <span style={{ fontFamily: mono, fontSize: 11.5, color: 'var(--accent)' }}>RetrievalCache</span>{' '}
-                    keyed on the query and document set, with get/put wrappers around the store…
+              )}
+
+              {r.receipt && (
+                <div style={{ padding: '14px 16px', display: 'flex', gap: 8 }}>
+                  <div style={{ fontFamily: mono, fontSize: 10, color: 'var(--accent)', paddingTop: 3, flex: 'none', width: 56 }}>
+                    {r.provider === 'codex' ? 'codex' : 'claude'}
                   </div>
+                  <div style={{ fontSize: 12.5, color: 'var(--tx)', lineHeight: 1.5 }}>{r.receipt.body}</div>
                 </div>
-              </div>
+              )}
+
               <div style={{ padding: '11px 16px', borderTop: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ fontFamily: mono, fontSize: 10.5, color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  rollout 9f3c · 18d ago · ~/.codex/sessions
+                  {[r.sourcePath, r.linkConfidence].filter(Boolean).join(' · ') || 'no source recorded'}
                 </span>
-                <span
-                  className="lg-hover-underline"
-                  onClick={onToggleLog}
-                  style={{ marginLeft: 'auto', flex: 'none', fontSize: 11.5, color: 'var(--accent)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                >
-                  {showLog ? 'Hide session log' : 'View session log →'}
-                </span>
+                {(r.toolSequence.length > 0 || r.sessionId) && (
+                  <span
+                    className="lg-hover-underline"
+                    onClick={onToggleLog}
+                    style={{ marginLeft: 'auto', flex: 'none', fontSize: 11.5, color: 'var(--accent)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    {showLog ? 'Hide session record' : 'View session record →'}
+                  </span>
+                )}
               </div>
+
               {showLog && (
-                <div className="lg-scroll" style={{ borderTop: '1px solid var(--bd)', background: '#121110', maxHeight: 188, overflow: 'auto' }}>
+                <div className="lg-scroll" style={{ borderTop: '1px solid var(--bd)', background: '#121110', maxHeight: 200, overflow: 'auto' }}>
                   <div style={{ padding: '8px 14px', fontFamily: mono, fontSize: 10.5, color: 'var(--faint)', borderBottom: '1px solid var(--bd)', position: 'sticky', top: 0, background: '#121110' }}>
-                    session-9f3c.jsonl
+                    {r.sourcePath || 'imported session record'}
                   </div>
-                  <pre style={{ margin: 0, padding: '10px 14px', fontFamily: mono, fontSize: 10.5, lineHeight: 1.65, color: '#8c8678', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                    {CODEX_LOG}
-                  </pre>
+                  <div style={{ padding: '10px 14px', fontFamily: mono, fontSize: 10.5, lineHeight: 1.7, color: '#8c8678' }}>
+                    {r.sessionId && <div>session_id: {r.sessionId}</div>}
+                    {r.linkConfidence && <div>link_confidence: {r.linkConfidence}</div>}
+                    {r.toolSequence.length > 0 && <div style={{ marginTop: 6, color: 'var(--faint)' }}>tool_sequence:</div>}
+                    {r.toolSequence.map((tool, i) => (
+                      <div key={i} style={{ paddingLeft: 12 }}>
+                        {i + 1}. {tool}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -192,9 +207,7 @@ export default function Topic({
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 1, background: 'var(--bd)' }}>
                 {history.map((h, i) => (
                   <div key={i} style={{ background: 'var(--panel)', padding: '14px 16px' }}>
-                    <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--faint)', marginBottom: 7 }}>
-                      {h.k}
-                    </div>
+                    <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--faint)', marginBottom: 7 }}>{h.k}</div>
                     <div style={{ fontSize: 14, fontWeight: 500, color: h.color }}>{h.v}</div>
                   </div>
                 ))}
@@ -202,8 +215,7 @@ export default function Topic({
             </div>
             <div style={{ padding: '12px 18px', borderTop: '1px solid var(--bd)', fontSize: 12.5, color: 'var(--mut)', lineHeight: 1.55 }}>
               Green behavior is necessary, not proof of mastery. Ledger records the{' '}
-              <span style={{ color: 'var(--tx)' }}>cost</span> of getting there — time, attempts, whether you reached for
-              the answer — not a pass/fail score.
+              <span style={{ color: 'var(--tx)' }}>cost</span> of getting there — time, attempts, whether you reached for the answer — not a pass/fail score.
             </div>
           </div>
         )}

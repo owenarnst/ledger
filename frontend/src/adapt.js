@@ -1,0 +1,95 @@
+// Maps backend rows into the display shapes the screens consume. The backend is
+// the source of truth (docs/planning/backend-topic-initialization-note.md); the
+// frontend never invents topics, providers, or risk semantics — it relabels.
+
+const STATE_BADGE = {
+  check_recommended: { badge: 'recommended', badgeLabel: 'Check recommended' },
+  code_changed_since_practice: { badge: 'changed', badgeLabel: 'Code changed since practice' },
+  practiced: { badge: 'practiced', badgeLabel: 'Practiced', faint: true },
+  in_progress: { badge: 'recommended', badgeLabel: 'In progress' },
+}
+
+// States where an ownership check is offered. The first such topic (lowest rank)
+// is the demo hero — the one grounded with a revision the backend can sandbox.
+const ACTIONABLE = new Set(['check_recommended', 'code_changed_since_practice', 'in_progress'])
+
+export const isActionable = (state) => ACTIONABLE.has(state)
+
+// Risk class is shown verbatim (underscores → hyphens). We do not translate the
+// backend's risk taxonomy into friendlier-but-invented labels.
+export const riskLabel = (rc) => (rc || '').replace(/_/g, '-')
+
+export function providerChip(topic) {
+  if (topic.claude_authored) return { label: '✳ Claude-authored', k: 'claude' }
+  if (topic.provider === 'codex') return { label: '⬡ Codex-authored', k: 'codex' }
+  return null
+}
+
+export function badgeForState(state) {
+  return STATE_BADGE[state] || { badge: 'recommended', badgeLabel: state }
+}
+
+// topics arrive ordered by rank. The first actionable one becomes the hero.
+export function toCards(topics) {
+  let heroTaken = false
+  return topics.map((t) => {
+    const sb = badgeForState(t.state)
+    const isHero = !heroTaken && ACTIONABLE.has(t.state)
+    if (isHero) heroTaken = true
+    const callers = `${t.caller_count} ${t.caller_count === 1 ? 'caller' : 'callers'}`
+    const chips = [
+      { label: callers, k: 'plain' },
+      { label: `risk: ${riskLabel(t.risk_class)}`, k: 'risk' },
+      providerChip(t),
+    ].filter(Boolean)
+    return {
+      id: t.id,
+      title: t.title,
+      badge: sb.badge,
+      badgeLabel: sb.badgeLabel,
+      faint: !!sb.faint,
+      isHero,
+      expanded: isHero,
+      why: t.why_now || '',
+      chips,
+      raw: t,
+    }
+  })
+}
+
+const RECEIPT_PROVIDER = {
+  claude_code: { label: '✳ Claude', chip: 'claude' },
+  codex: { label: '⬡ Codex', chip: 'codex' },
+}
+
+// Pull the authoring-receipt view out of a topic detail's evidence list.
+export function deriveReceipt(detail) {
+  const ev = detail.evidence || []
+  const code = ev.find((e) => e.kind === 'code') || null
+  const receipt = ev.find((e) => /_receipt$/.test(e.kind)) || null
+  const trail = ev.find((e) => e.kind === 'missing_reasoning') || null
+  const provider = receipt?.provider || detail.provider || 'claude_code'
+  const pm = RECEIPT_PROVIDER[provider] || { label: provider, chip: 'plain' }
+  return {
+    code,
+    receipt,
+    trail,
+    provider,
+    providerLabel: pm.label,
+    providerChipKind: pm.chip,
+    toolSequence: receipt?.tool_sequence || [],
+    sourcePath: receipt?.source_path || null,
+    sessionId: receipt?.session_id || null,
+    linkConfidence: receipt?.link_confidence || null,
+    codePath: detail.current_revision?.code_path || code?.title || '',
+    invariant: detail.current_revision?.invariant || '',
+  }
+}
+
+// Derive the read-only companion test path from a check's editable target.
+// retrieval/rerank.py -> tests/test_rerank.py
+export function testPathFor(targetFile) {
+  if (!targetFile) return null
+  const base = targetFile.split('/').pop()
+  return `tests/test_${base}`
+}

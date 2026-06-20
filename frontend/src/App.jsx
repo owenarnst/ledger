@@ -1,18 +1,19 @@
-// Issue #4 — App shell. Holds the demo state machine (ported from the design's
-// DCLogic class) and routes between the three screens. The persistent rail +
-// breadcrumb live here. State-based navigation now; react-router can replace it
-// to match the SessionStart nudge URL shape (#10) when the API is wired.
+// Issue #4 — App shell. Holds the demo state machine and routes between the
+// three screens. Data is live now: topics, receipts, sandbox files, runs, and
+// coaching all come from the FastAPI backend (src/api.js). The persistent rail +
+// breadcrumb live here. State-based navigation; react-router can replace it to
+// match the SessionStart nudge URL shape (#10) later.
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import Dashboard from './screens/Dashboard.jsx'
 import Topic from './screens/Topic.jsx'
 import Workspace from './screens/Workspace.jsx'
-import { MUTATED, TOPICS_RAW, coachReply } from './fixtures.js'
+import * as api from './api.js'
+import { toCards, isActionable, testPathFor } from './adapt.js'
 
 const mono = "'JetBrains Mono', monospace"
-const SHOW_MEMORY_BEAT = true
 
-function Rail({ topicCount }) {
-  const label = (txt) => ({
+function Rail({ projectName, topicCount, readyCount }) {
+  const label = () => ({
     fontFamily: mono,
     fontSize: 10.5,
     letterSpacing: '0.08em',
@@ -20,6 +21,7 @@ function Rail({ topicCount }) {
     color: 'var(--faint)',
     padding: '8px 6px 6px',
   })
+  const readyLabel = `${readyCount} ${readyCount === 1 ? 'check' : 'checks'} ready`
   return (
     <aside style={{ width: 248, flex: 'none', borderRight: '1px solid var(--bd)', background: 'var(--panel)', display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 18px 16px' }}>
@@ -36,8 +38,10 @@ function Rail({ topicCount }) {
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 10px', borderRadius: 8, background: 'var(--panel2)', border: '1px solid var(--bd2)' }}>
           <div style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)', marginTop: 6, flex: 'none' }} />
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 500, fontSize: 13.5 }}>rag-pilot</div>
-            <div style={{ fontSize: 11.5, color: 'var(--mut)', marginTop: 2 }}>{topicCount} topics · 1 check ready</div>
+            <div style={{ fontWeight: 500, fontSize: 13.5 }}>{projectName || '—'}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--mut)', marginTop: 2 }}>
+              {topicCount} topics · {readyLabel}
+            </div>
           </div>
         </div>
       </div>
@@ -74,13 +78,13 @@ function Rail({ topicCount }) {
   )
 }
 
-function TopBar({ crumbTopic, isWorkspace, statsLabel, onExit }) {
+function TopBar({ projectName, crumbTopic, isWorkspace, statsLabel, onExit }) {
   return (
     <div style={{ height: 52, flex: 'none', borderBottom: '1px solid var(--bd)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 22px', background: 'var(--bg)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 13 }}>
         <span style={{ color: 'var(--faint)' }}>Ledger</span>
         <span style={{ color: 'var(--faint)', fontSize: 11 }}>›</span>
-        <span style={{ color: 'var(--tx)', fontWeight: 500 }}>rag-pilot</span>
+        <span style={{ color: 'var(--tx)', fontWeight: 500 }}>{projectName || '—'}</span>
         {crumbTopic && (
           <>
             <span style={{ color: 'var(--faint)', fontSize: 11 }}>›</span>
@@ -100,19 +104,40 @@ function TopBar({ crumbTopic, isWorkspace, statsLabel, onExit }) {
   )
 }
 
+function CenterNote({ children, tone }) {
+  const color = tone === 'error' ? 'var(--red)' : 'var(--mut)'
+  return (
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
+      <div style={{ maxWidth: 560, textAlign: 'center', color, fontSize: 13.5, lineHeight: 1.6, fontFamily: mono }}>{children}</div>
+    </div>
+  )
+}
+
 export default function App() {
   const [screen, setScreen] = useState('dashboard')
-  const [heroPracticed, setHeroPracticed] = useState(false)
-  const [activeFile, setActiveFile] = useState('cache.py')
-  const [code, setCode] = useState('')
+  const [project, setProject] = useState(null)
+  const [cards, setCards] = useState([])
+  const [loadError, setLoadError] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  const [topicDetail, setTopicDetail] = useState(null) // full detail of the open topic
+  const [check, setCheck] = useState(null) // active check {id, target_file, test_command,...}
+  const [activeFile, setActiveFile] = useState(null) // relative path of selected file
+  const [files, setFiles] = useState([]) // [{path, name, editable}]
+  const [code, setCode] = useState('') // editable target file content
+  const [roContent, setRoContent] = useState({}) // path -> read-only content
+
   const [running, setRunning] = useState(false)
-  const [phase, setPhase] = useState('idle') // idle | creating | running | fail | pass
+  const [phase, setPhase] = useState('idle') // idle | creating | running | fail | pass | error
+  const [runOutput, setRunOutput] = useState('')
   const [runs, setRuns] = useState(0)
   const [elapsedMin, setElapsedMin] = useState(0)
+
   const [thread, setThread] = useState([])
   const [coachInput, setCoachInput] = useState('')
   const [histStats, setHistStats] = useState(null)
   const [showLog, setShowLog] = useState(false)
+
   const [taskW, setTaskW] = useState(280)
   const [coachW, setCoachW] = useState(372)
 
@@ -123,7 +148,27 @@ export default function App() {
     codeRef.current = code
   }, [code])
 
-  // componentDidMount: restore persisted pane widths
+  // initial load: project + topics
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const [projects, topics] = await Promise.all([api.listProjects(), api.listTopics()])
+        if (!alive) return
+        setProject(projects[0] || null)
+        setCards(toCards(topics))
+      } catch (e) {
+        if (alive) setLoadError(e.message || String(e))
+      } finally {
+        if (alive) setLoading(false)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  // restore persisted pane widths
   useEffect(() => {
     try {
       const tw = parseInt(localStorage.getItem('lg_taskW'), 10)
@@ -134,25 +179,63 @@ export default function App() {
   }, [])
 
   // ---- navigation ----
-  const openTopic = useCallback(() => setScreen('topic'), [])
+  const openTopic = useCallback(async (card) => {
+    setShowLog(false)
+    try {
+      const detail = await api.getTopic(card.id)
+      setTopicDetail(detail)
+      setScreen('topic')
+    } catch (e) {
+      setLoadError(e.message || String(e))
+    }
+  }, [])
+
   const backToWorklist = useCallback(() => setScreen('dashboard'), [])
   const toggleLog = useCallback(() => setShowLog((v) => !v), [])
   const exitCheck = useCallback(() => setScreen('topic'), [])
 
-  const startCheck = useCallback(() => {
-    startTsRef.current = Date.now()
-    codeRef.current = MUTATED
+  // ---- check lifecycle ----
+  const startCheck = useCallback(async () => {
+    if (!topicDetail) return
     setScreen('workspace')
-    setActiveFile('cache.py')
-    setCode(MUTATED)
     setPhase('creating')
     setRunning(false)
     setRuns(0)
     setElapsedMin(0)
     setThread([])
     setCoachInput('')
-    setTimeout(() => setPhase((p) => (p === 'creating' ? 'idle' : p)), 900)
-  }, [])
+    setRunOutput('')
+    setFiles([])
+    setCode('')
+    setRoContent({})
+    startTsRef.current = Date.now()
+    try {
+      const created = await api.createCheck(topicDetail.id)
+      setCheck(created)
+      const targetPath = created.target_file
+      const targetFile = await api.readFile(created.id, targetPath)
+      codeRef.current = targetFile.content
+      setCode(targetFile.content)
+      setActiveFile(targetPath)
+
+      const fileList = [{ path: targetPath, name: targetPath.split('/').pop(), editable: true, modified: true }]
+      const testPath = testPathFor(targetPath)
+      if (testPath) {
+        try {
+          const testFile = await api.readFile(created.id, testPath)
+          setRoContent((m) => ({ ...m, [testPath]: testFile.content }))
+          fileList.push({ path: testPath, name: testPath.split('/').pop(), editable: false, modified: false })
+        } catch (_) {
+          /* no companion test file — editor still works with the target alone */
+        }
+      }
+      setFiles(fileList)
+      setPhase('idle')
+    } catch (e) {
+      setRunOutput(`Could not create sandbox: ${e.message || e}`)
+      setPhase('error')
+    }
+  }, [topicDetail])
 
   const onCode = useCallback((e) => {
     const v = e.target.value
@@ -161,43 +244,52 @@ export default function App() {
     setPhase((p) => (p === 'pass' || p === 'fail' ? 'idle' : p))
   }, [])
 
-  const isFixed = useCallback(() => {
-    const m = (codeRef.current || '').match(/parts\s*=\s*\[([^\]]*)\]/)
-    return !!(m && /tenant_id/.test(m[1]))
-  }, [])
-
-  const runChecks = useCallback(() => {
-    setRunning((r) => {
-      if (r) return r
-      setPhase('running')
-      setTimeout(() => {
-        const pass = isFixed()
-        const mins = Math.max(1, Math.round((Date.now() - startTsRef.current) / 60000))
-        setRunning(false)
-        setPhase(pass ? 'pass' : 'fail')
-        setRuns((n) => n + 1)
-        setElapsedMin(mins)
-      }, 1100)
-      return true
-    })
-  }, [isFixed])
+  const runChecks = useCallback(async () => {
+    if (running || !check) return
+    setRunning(true)
+    setPhase('running')
+    try {
+      await api.writeFile(check.id, check.target_file, codeRef.current)
+      const result = await api.runCheck(check.id)
+      const mins = Math.max(1, Math.round((Date.now() - startTsRef.current) / 60000))
+      setRunOutput(result.output || '')
+      setPhase(result.passed ? 'pass' : 'fail')
+      setRuns((n) => n + 1)
+      setElapsedMin(mins)
+    } catch (e) {
+      setRunOutput(`Check runner error: ${e.message || e}`)
+      setPhase('error')
+    } finally {
+      setRunning(false)
+    }
+  }, [running, check])
 
   // ---- coach ----
-  const pushCoach = useCallback((text) => {
-    const t = (text || '').trim()
-    if (!t) return
-    setThread((th) => [...th, { role: 'user', text: t }, { role: 'thinking' }])
-    setCoachInput('')
-    setTimeout(() => {
-      const card = coachReply(t)
-      setThread((th) => {
-        const copy = th.slice()
-        const i = copy.findIndex((m) => m.role === 'thinking')
-        if (i >= 0) copy[i] = { role: 'coach', ...card }
-        return copy
-      })
-    }, 1200)
-  }, [])
+  const pushCoach = useCallback(
+    async (text) => {
+      const t = (text || '').trim()
+      if (!t || !check) return
+      setThread((th) => [...th, { role: 'user', text: t }, { role: 'thinking' }])
+      setCoachInput('')
+      try {
+        const res = await api.askCoach(check.id, t)
+        setThread((th) => {
+          const copy = th.slice()
+          const i = copy.findIndex((m) => m.role === 'thinking')
+          if (i >= 0) copy[i] = { role: 'coach', text: res.response || '' }
+          return copy
+        })
+      } catch (e) {
+        setThread((th) => {
+          const copy = th.slice()
+          const i = copy.findIndex((m) => m.role === 'thinking')
+          if (i >= 0) copy[i] = { role: 'coach', text: `Coach unavailable: ${e.message || e}` }
+          return copy
+        })
+      }
+    },
+    [check],
+  )
 
   const sendCoach = useCallback(() => pushCoach(coachInput), [pushCoach, coachInput])
   const onCoachInput = useCallback((e) => setCoachInput(e.target.value), [])
@@ -211,74 +303,92 @@ export default function App() {
     [pushCoach],
   )
 
-  const completeCheck = useCallback(() => {
-    setThread((th) => {
-      const conceptAsked = th.filter((m) => m.role === 'user').length
-      const secs = Math.max(40, Math.round((Date.now() - startTsRef.current) / 1000))
-      const mm = Math.floor(secs / 60)
-      const ss = secs % 60
-      setHistStats({ elapsed: (mm > 0 ? mm + 'm ' : '') + ss + 's', runs, concept: conceptAsked })
-      return th
-    })
-    setHeroPracticed(true)
+  const completeCheck = useCallback(async () => {
+    if (!check) return
+    const conceptAsked = thread.filter((m) => m.role === 'user').length
+    const secs = Math.max(40, Math.round((Date.now() - startTsRef.current) / 1000))
+    const mm = Math.floor(secs / 60)
+    const ss = secs % 60
+    setHistStats({ elapsed: (mm > 0 ? mm + 'm ' : '') + ss + 's', runs, concept: conceptAsked })
+    try {
+      await api.completeCheck(check.id)
+      const detail = await api.getTopic(check.topic_id)
+      setTopicDetail(detail)
+      setCards((cs) => cs.map((c) => (c.id === detail.id ? { ...c, badge: 'practiced', badgeLabel: 'Practiced', faint: true } : c)))
+    } catch (_) {
+      /* keep the local practiced view even if the persist call fails */
+    }
     setScreen('topic')
-  }, [runs])
+  }, [check, thread, runs])
 
   // ---- drag-resize ----
-  const startDrag = useCallback((which) => (e) => {
-    e.preventDefault()
-    const startX = e.clientX
-    const start = which === 'task' ? taskW : coachW
-    let latest = start
-    const move = (ev) => {
-      const delta = ev.clientX - startX
-      latest = which === 'task' ? Math.min(460, Math.max(210, start + delta)) : Math.min(620, Math.max(300, start - delta))
-      if (which === 'task') setTaskW(latest)
-      else setCoachW(latest)
-    }
-    const up = () => {
-      window.removeEventListener('mousemove', move)
-      window.removeEventListener('mouseup', up)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-      try {
-        localStorage.setItem(which === 'task' ? 'lg_taskW' : 'lg_coachW', String(latest))
-      } catch (_) {}
-    }
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-    window.addEventListener('mousemove', move)
-    window.addEventListener('mouseup', up)
-  }, [taskW, coachW])
+  const startDrag = useCallback(
+    (which) => (e) => {
+      e.preventDefault()
+      const startX = e.clientX
+      const start = which === 'task' ? taskW : coachW
+      let latest = start
+      const move = (ev) => {
+        const delta = ev.clientX - startX
+        latest = which === 'task' ? Math.min(460, Math.max(210, start + delta)) : Math.min(620, Math.max(300, start - delta))
+        if (which === 'task') setTaskW(latest)
+        else setCoachW(latest)
+      }
+      const up = () => {
+        window.removeEventListener('mousemove', move)
+        window.removeEventListener('mouseup', up)
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+        try {
+          localStorage.setItem(which === 'task' ? 'lg_taskW' : 'lg_coachW', String(latest))
+        } catch (_) {}
+      }
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+      window.addEventListener('mousemove', move)
+      window.addEventListener('mouseup', up)
+    },
+    [taskW, coachW],
+  )
 
   // ---- derive ----
-  const topics = (SHOW_MEMORY_BEAT ? TOPICS_RAW : TOPICS_RAW.filter((t) => !t.memory)).map((t) => ({
-    id: t.id,
-    title: t.title,
-    badge: t.badge,
-    badgeLabel: t.badgeLabel,
-    isHero: !!t.isHero,
-    expanded: !!t.expanded,
-    faint: !!t.faint,
-    why: t.why || '',
-    chips: t.chips,
-  }))
-
+  const readyCount = cards.filter((c) => isActionable(c.raw.state)).length
+  const projectName = project?.name || ''
+  const heroPracticed = topicDetail?.state === 'practiced'
   const showRail = screen !== 'workspace'
-  const crumbTopic = screen === 'topic' ? 'Tenant isolation' : screen === 'workspace' ? 'Tenant isolation › check' : ''
+  const crumbTopic =
+    screen === 'topic' && topicDetail
+      ? topicDetail.title
+      : screen === 'workspace' && topicDetail
+        ? `${topicDetail.title} › check`
+        : ''
   const statsLabel = `${runs}${runs === 1 ? ' run' : ' runs'} · ${elapsedMin}m`
 
   return (
     <div style={{ height: '100vh', width: '100%', display: 'flex', overflow: 'hidden', background: 'var(--bg)', color: 'var(--tx)' }}>
-      {showRail && <Rail topicCount={topics.length} />}
+      {showRail && <Rail projectName={projectName} topicCount={cards.length} readyCount={readyCount} />}
 
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <TopBar crumbTopic={crumbTopic} isWorkspace={screen === 'workspace'} statsLabel={statsLabel} onExit={exitCheck} />
+        <TopBar projectName={projectName} crumbTopic={crumbTopic} isWorkspace={screen === 'workspace'} statsLabel={statsLabel} onExit={exitCheck} />
 
-        {screen === 'dashboard' && <Dashboard topics={topics} onOpen={openTopic} />}
+        {loadError && screen === 'dashboard' && (
+          <CenterNote tone="error">
+            Couldn’t reach the Ledger backend.
+            <br />
+            <span style={{ color: 'var(--faint)' }}>{loadError}</span>
+            <br />
+            <br />
+            Start it with <span style={{ color: 'var(--tx)' }}>uvicorn ledger_backend.api:app --port 8000</span>.
+          </CenterNote>
+        )}
 
-        {screen === 'topic' && (
+        {!loadError && loading && screen === 'dashboard' && <CenterNote>Loading worklist…</CenterNote>}
+
+        {!loadError && !loading && screen === 'dashboard' && <Dashboard topics={cards} onOpen={openTopic} />}
+
+        {screen === 'topic' && topicDetail && (
           <Topic
+            detail={topicDetail}
             heroPracticed={heroPracticed}
             histStats={histStats}
             showLog={showLog}
@@ -290,17 +400,21 @@ export default function App() {
 
         {screen === 'workspace' && (
           <Workspace
+            topic={topicDetail}
+            check={check}
             taskW={taskW}
             coachW={coachW}
             dragTask={startDrag('task')}
             dragCoach={startDrag('coach')}
+            files={files}
             activeFile={activeFile}
             setActiveFile={setActiveFile}
             code={code}
+            roContent={roContent}
             onCode={onCode}
             phase={phase}
             running={running}
-            runs={runs}
+            runOutput={runOutput}
             runChecks={runChecks}
             thread={thread}
             coachInput={coachInput}

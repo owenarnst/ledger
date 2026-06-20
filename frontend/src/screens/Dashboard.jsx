@@ -24,7 +24,7 @@ export default function Dashboard({ topics, onOpen }) {
             <div
               key={t.id}
               className="lg-hover-row"
-              onClick={t.isHero ? onOpen : undefined}
+              onClick={t.isHero ? () => onOpen(t) : undefined}
               style={{
                 border: '1px solid var(--bd)',
                 background: 'var(--panel)',
