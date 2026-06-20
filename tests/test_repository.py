@@ -1,4 +1,5 @@
 from ledger_backend.repository import LedgerRepository
+from ledger_backend.ingestion import ClaudeCodeAdapter, CodexAdapter
 
 
 def test_repository_seeds_demo_project_and_topics(tmp_path):
@@ -72,3 +73,62 @@ def test_hook_event_initializes_project_and_topics_from_repo(tmp_path):
     evidence = {(item["kind"], item["title"]) for item in topic["evidence"]}
     assert ("code", "retrieval/rerank.py") in evidence
     assert ("hook_event", "post-commit on main") in evidence
+
+
+def test_claude_code_hook_event_labels_provider_on_event_and_evidence(tmp_path):
+    repo_path = tmp_path / "docs-api"
+    retrieval_dir = repo_path / "retrieval"
+    retrieval_dir.mkdir(parents=True)
+    (retrieval_dir / "rerank.py").write_text("def rerank():\n    return []\n")
+
+    repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
+    repo.initialize()
+
+    result = repo.record_hook_event(
+        event_type="SessionStart",
+        cwd=str(repo_path),
+        branch="main",
+        head_sha="abc123",
+        payload={"changed_files": ["retrieval/rerank.py"]},
+    )
+
+    assert result["event"]["provider"] == "claude_code"
+    assert result["topics"][0]["provider"] == "claude_code"
+    topic = repo.get_topic(result["topics"][0]["id"])
+    assert {item["provider"] for item in topic["evidence"]} == {"claude_code"}
+
+
+def test_codex_adapter_normalizes_to_provider_labeled_event(tmp_path):
+    repo_path = tmp_path / "docs-api"
+    repo_path.mkdir()
+
+    event = CodexAdapter().normalize(
+        {
+            "event_type": "SessionStart",
+            "cwd": str(repo_path),
+            "branch": "main",
+            "head_sha": "abc123",
+            "changed_files": ["retrieval/rerank.py"],
+        }
+    )
+
+    assert event.provider == "codex"
+    assert event.cwd == str(repo_path)
+    assert event.payload["changed_files"] == ["retrieval/rerank.py"]
+
+
+def test_claude_code_adapter_is_default_priority_provider(tmp_path):
+    repo_path = tmp_path / "docs-api"
+    repo_path.mkdir()
+
+    event = ClaudeCodeAdapter().normalize(
+        {
+            "event_type": "SessionStart",
+            "cwd": str(repo_path),
+            "branch": "main",
+            "head_sha": "abc123",
+            "changed_files": ["retrieval/rerank.py"],
+        }
+    )
+
+    assert event.provider == "claude_code"

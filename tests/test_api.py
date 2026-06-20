@@ -55,3 +55,53 @@ def test_api_records_hook_event_and_refreshes_topics(tmp_path):
     assert body["project"]["slug"] == "docs-api"
     assert body["topics"]
     assert body["event"]["event_type"] == "SessionStart"
+
+
+def test_api_defaults_hook_provider_to_claude_code(tmp_path):
+    repo_path = tmp_path / "docs-api"
+    retrieval_dir = repo_path / "retrieval"
+    retrieval_dir.mkdir(parents=True)
+    (retrieval_dir / "rerank.py").write_text("def rerank():\n    return []\n")
+    app = create_app(db_path=tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/hooks/events",
+        json={
+            "event_type": "SessionStart",
+            "cwd": str(repo_path),
+            "branch": "main",
+            "head_sha": "abc123",
+            "changed_files": ["retrieval/rerank.py"],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["event"]["provider"] == "claude_code"
+    assert body["topics"][0]["provider"] == "claude_code"
+
+
+def test_api_accepts_codex_provider_for_ingestion_only(tmp_path):
+    repo_path = tmp_path / "docs-api"
+    retrieval_dir = repo_path / "retrieval"
+    retrieval_dir.mkdir(parents=True)
+    (retrieval_dir / "rerank.py").write_text("def rerank():\n    return []\n")
+    app = create_app(db_path=tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/hooks/events",
+        json={
+            "provider": "codex",
+            "event_type": "SessionStart",
+            "cwd": str(repo_path),
+            "branch": "main",
+            "head_sha": "abc123",
+            "changed_files": ["retrieval/rerank.py"],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["event"]["provider"] == "codex"

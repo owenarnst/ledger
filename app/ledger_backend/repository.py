@@ -8,6 +8,7 @@ from typing import Any
 
 from .coach import Coach, create_coach
 from .db import connect, initialize_schema
+from .ingestion import DEFAULT_PROVIDER, IngestionEvent
 from .sandbox import create_hero_sandbox, run_pytest
 
 
@@ -99,24 +100,39 @@ class LedgerRepository:
         branch: str | None = None,
         head_sha: str | None = None,
         payload: dict[str, Any] | None = None,
+        provider: str = DEFAULT_PROVIDER,
     ) -> dict[str, Any]:
-        project = self.initialize_project_from_repo(cwd)
-        payload = payload or {}
+        event = IngestionEvent(
+            provider=provider,
+            event_type=event_type,
+            cwd=str(cwd),
+            branch=branch,
+            head_sha=head_sha,
+            payload=payload or {},
+        )
+        project = self.initialize_project_from_repo(event.cwd)
         with connect(self.db_path) as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO hook_events (project_id, event_type, branch, head_sha, payload_json)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO hook_events (project_id, provider, event_type, branch, head_sha, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (project["id"], event_type, branch, head_sha, json.dumps(payload, sort_keys=True)),
+                (
+                    project["id"],
+                    event.provider,
+                    event.event_type,
+                    event.branch,
+                    event.head_sha,
+                    json.dumps(event.payload, sort_keys=True),
+                ),
             )
             conn.commit()
-            event = dict(
+            stored_event = dict(
                 conn.execute("SELECT * FROM hook_events WHERE id = ?", (cursor.lastrowid,)).fetchone()
             )
 
         topics = self.extract_or_refresh_topics(project["id"])
-        return {"project": project, "event": event, "topics": topics}
+        return {"project": project, "event": stored_event, "topics": topics}
 
     def extract_or_refresh_topics(self, project_id: str) -> list[dict[str, Any]]:
         with connect(self.db_path) as conn:
@@ -145,9 +161,10 @@ class LedgerRepository:
                 conn.execute(
                     """
                     INSERT INTO topics
-                    (id, project_id, title, state, summary, why_now, risk_class, caller_count, claude_authored, rank)
-                    VALUES (?, ?, ?, 'check_recommended', ?, ?, 'repo_activity', 1, ?, ?)
+                    (id, project_id, provider, title, state, summary, why_now, risk_class, caller_count, claude_authored, rank)
+                    VALUES (?, ?, ?, ?, 'check_recommended', ?, ?, 'repo_activity', 1, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
+                        provider = excluded.provider,
                         state = excluded.state,
                         summary = excluded.summary,
                         why_now = excluded.why_now,
@@ -157,6 +174,7 @@ class LedgerRepository:
                     (
                         topic_id,
                         project_id,
+                        latest_event["provider"],
                         title,
                         summary,
                         why_now,
@@ -166,16 +184,18 @@ class LedgerRepository:
                 )
                 conn.execute("DELETE FROM evidence WHERE topic_id = ?", (topic_id,))
                 conn.executemany(
-                    "INSERT INTO evidence (topic_id, kind, title, body) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO evidence (topic_id, provider, kind, title, body) VALUES (?, ?, ?, ?, ?)",
                     [
                         (
                             topic_id,
+                            latest_event["provider"],
                             "code",
                             relative_path,
                             self._summarize_file(Path(project["repo_path"]) / relative_path),
                         ),
                         (
                             topic_id,
+                            latest_event["provider"],
                             "hook_event",
                             self._hook_event_title(latest_event),
                             self._hook_event_body(latest_event),
@@ -192,7 +212,7 @@ class LedgerRepository:
                 raise KeyError(topic_id)
             payload = dict(topic)
             payload["evidence"] = self._rows(
-                conn.execute("SELECT kind, title, body FROM evidence WHERE topic_id = ?", (topic_id,))
+                conn.execute("SELECT provider, kind, title, body FROM evidence WHERE topic_id = ?", (topic_id,))
             )
             return payload
 
@@ -407,13 +427,13 @@ class LedgerRepository:
         conn.executemany(
             """
             INSERT INTO topics
-            (id, project_id, title, state, summary, why_now, risk_class, caller_count, claude_authored, rank)
-            VALUES (?, 'project-docs-api', ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, project_id, provider, title, state, summary, why_now, risk_class, caller_count, claude_authored, rank)
+            VALUES (?, 'project-docs-api', 'claude_code', ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             topics,
         )
         conn.executemany(
-            "INSERT INTO evidence (topic_id, kind, title, body) VALUES (?, ?, ?, ?)",
+            "INSERT INTO evidence (topic_id, provider, kind, title, body) VALUES (?, 'claude_code', ?, ?, ?)",
             [
                 (
                     "tenant-cache-isolation",

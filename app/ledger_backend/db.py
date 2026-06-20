@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE TABLE IF NOT EXISTS topics (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),
+    provider TEXT NOT NULL DEFAULT 'claude_code',
     title TEXT NOT NULL,
     state TEXT NOT NULL,
     summary TEXT NOT NULL,
@@ -31,6 +32,7 @@ CREATE TABLE IF NOT EXISTS topics (
 CREATE TABLE IF NOT EXISTS evidence (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     topic_id TEXT NOT NULL REFERENCES topics(id),
+    provider TEXT NOT NULL DEFAULT 'claude_code',
     kind TEXT NOT NULL,
     title TEXT NOT NULL,
     body TEXT NOT NULL
@@ -39,6 +41,7 @@ CREATE TABLE IF NOT EXISTS evidence (
 CREATE TABLE IF NOT EXISTS hook_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id TEXT NOT NULL REFERENCES projects(id),
+    provider TEXT NOT NULL DEFAULT 'claude_code',
     event_type TEXT NOT NULL,
     branch TEXT,
     head_sha TEXT,
@@ -75,6 +78,12 @@ CREATE TABLE IF NOT EXISTS coach_messages (
 );
 """
 
+MIGRATIONS = [
+    "ALTER TABLE topics ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude_code'",
+    "ALTER TABLE evidence ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude_code'",
+    "ALTER TABLE hook_events ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude_code'",
+]
+
 
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,4 +95,10 @@ def connect(db_path: Path) -> sqlite3.Connection:
 
 def initialize_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    for statement in MIGRATIONS:
+        try:
+            conn.execute(statement)
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc):
+                raise
     conn.commit()

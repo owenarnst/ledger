@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from .ingestion import DEFAULT_PROVIDER, adapter_for
 from .repository import DEFAULT_DB_PATH, DEFAULT_SANDBOX_ROOT, LedgerRepository
 
 
@@ -18,6 +19,7 @@ class CoachRequest(BaseModel):
 
 
 class HookEventRequest(BaseModel):
+    provider: str = DEFAULT_PROVIDER
     event_type: str
     cwd: str
     branch: str | None = None
@@ -46,15 +48,14 @@ def create_app(
     @app.post("/api/hooks/events")
     def record_hook_event(payload: HookEventRequest) -> dict:
         try:
+            event = adapter_for(payload.provider).normalize(payload.model_dump())
             return repo.record_hook_event(
-                event_type=payload.event_type,
-                cwd=payload.cwd,
-                branch=payload.branch,
-                head_sha=payload.head_sha,
-                payload={
-                    "changed_files": payload.changed_files,
-                    "source": payload.source,
-                },
+                provider=event.provider,
+                event_type=event.event_type,
+                cwd=event.cwd,
+                branch=event.branch,
+                head_sha=event.head_sha,
+                payload=event.payload,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
