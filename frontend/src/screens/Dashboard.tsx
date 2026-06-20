@@ -1,11 +1,16 @@
 // Issue #6 — Ranked ownership worklist (curated order). Rank #1 expanded into
 // the authored "why selected". Provider-labeled chips per row.
-import React from 'react'
-import { badge, chipForKind } from '../theme.js'
+import { Card } from '../adapt'
+import { badge, chipForKind } from '../theme'
 
 const mono = "'JetBrains Mono', monospace"
 
-export default function Dashboard({ topics, onOpen }) {
+interface DashboardProps {
+  topics: Card[]
+  onOpen: (card: Card) => void
+}
+
+export default function Dashboard({ topics, onOpen }: DashboardProps) {
   return (
     <div className="lg-scroll" style={{ flex: 1, overflow: 'auto' }}>
       <div style={{ maxWidth: 980, margin: '0 auto', padding: '40px 44px 80px' }}>

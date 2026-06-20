@@ -3,8 +3,10 @@
 
 export const mono = "'JetBrains Mono', monospace"
 
-export function badge(kind) {
-  const base = {
+export type BadgeKind = 'recommended' | 'changed' | 'practiced' | string
+
+export function badge(kind: BadgeKind): React.CSSProperties {
+  const base: React.CSSProperties = {
     display: 'inline-flex',
     alignItems: 'center',
     gap: 6,
@@ -24,7 +26,7 @@ export function badge(kind) {
   return base
 }
 
-const monoChip = {
+const monoChip: React.CSSProperties = {
   whiteSpace: 'nowrap',
   fontFamily: mono,
   fontSize: 11,
@@ -32,21 +34,21 @@ const monoChip = {
   borderRadius: 6,
 }
 
-export const chipPlain = { ...monoChip, color: '#9a9384', background: '#201e18', border: '1px solid var(--bd)' }
-export const chipRisk = { ...monoChip, color: '#9a9384', background: '#201e18', border: '1px solid var(--bd2)' }
-export const chipClaude = {
+export const chipPlain: React.CSSProperties = { ...monoChip, color: '#9a9384', background: '#201e18', border: '1px solid var(--bd)' }
+export const chipRisk: React.CSSProperties = { ...monoChip, color: '#9a9384', background: '#201e18', border: '1px solid var(--bd2)' }
+export const chipClaude: React.CSSProperties = {
   ...monoChip,
   color: '#d6a07e',
   background: 'rgba(200,116,77,0.10)',
   border: '1px solid rgba(200,116,77,0.22)',
 }
-export const chipCodex = {
+export const chipCodex: React.CSSProperties = {
   ...monoChip,
   color: '#a6bcdb',
   background: 'rgba(133,160,196,0.10)',
   border: '1px solid rgba(133,160,196,0.24)',
 }
-export const toolChip = {
+export const toolChip: React.CSSProperties = {
   whiteSpace: 'nowrap',
   color: '#cdcabf',
   background: '#201e18',
@@ -55,7 +57,9 @@ export const toolChip = {
   borderRadius: 5,
 }
 
-export function chipForKind(k) {
+export type ChipKind = 'claude' | 'codex' | 'risk' | 'plain'
+
+export function chipForKind(k: ChipKind): React.CSSProperties {
   if (k === 'claude') return chipClaude
   if (k === 'codex') return chipCodex
   if (k === 'risk') return chipRisk

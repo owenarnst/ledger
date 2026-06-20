@@ -3,13 +3,24 @@
 // / L2 tool-chips + summary / L3 imported session record). Post-check: Practice
 // history. Everything is provider-labeled from the backend evidence — the hero
 // is Claude-authored here (ADR-0001 spine), not the design's placeholder Codex.
-import React from 'react'
-import { badge, chipPlain, chipRisk, toolChip, chipForKind } from '../theme.js'
-import { deriveReceipt, riskLabel } from '../adapt.js'
+import { Fragment } from 'react'
+import { badge, chipPlain, chipRisk, toolChip, chipForKind } from '../theme'
+import { deriveReceipt, riskLabel } from '../adapt'
+import * as api from '../api'
 
 const mono = "'JetBrains Mono', monospace"
 
-export default function Topic({ detail, heroPracticed, histStats, showLog, onToggleLog, onStartCheck, onBack }) {
+interface TopicProps {
+  detail: api.TopicDetail
+  heroPracticed: boolean
+  histStats: { elapsed: string; runs: number; concept: number } | null
+  showLog: boolean
+  onToggleLog: () => void
+  onStartCheck: () => void
+  onBack: () => void
+}
+
+export default function Topic({ detail, heroPracticed, histStats, showLog, onToggleLog, onStartCheck, onBack }: TopicProps) {
   const r = deriveReceipt(detail)
   const canCheck = !!detail.current_revision
   const heroBadgeCss = heroPracticed ? badge('practiced') : badge('recommended')
@@ -128,7 +139,7 @@ export default function Topic({ detail, heroPracticed, histStats, showLog, onTog
             <div style={{ border: '1px solid var(--bd)', borderRadius: 12, background: 'var(--panel)', overflow: 'hidden' }}>
               <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>Authoring receipt</div>
-                <span style={chipForKind(r.providerChipKind)}>{r.providerLabel}</span>
+                <span style={chipForKind(r.providerChipKind as any)}>{r.providerLabel}</span>
                 <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, fontFamily: mono, fontSize: 10, color: 'var(--faint)' }}>
                   <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
                     <path d="M4 7V5a4 4 0 0 1 8 0v2" stroke="currentColor" strokeWidth="1.3" />
@@ -142,10 +153,10 @@ export default function Topic({ detail, heroPracticed, histStats, showLog, onTog
                 <div style={{ padding: '13px 16px', borderBottom: '1px solid var(--bd)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontFamily: mono, fontSize: 11 }}>
                     {r.toolSequence.map((tool, i) => (
-                      <React.Fragment key={i}>
+                      <Fragment key={i}>
                         {i > 0 && <span style={{ color: 'var(--faint)' }}>→</span>}
                         <span style={toolChip}>{tool}</span>
-                      </React.Fragment>
+                      </Fragment>
                     ))}
                   </div>
                 </div>

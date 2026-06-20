@@ -3,16 +3,22 @@
 // coaching all come from the FastAPI backend (src/api.js). The persistent rail +
 // breadcrumb live here. State-based navigation; react-router can replace it to
 // match the SessionStart nudge URL shape (#10) later.
-import React, { useCallback, useEffect, useRef, useState } from 'react'
-import Dashboard from './screens/Dashboard.jsx'
-import Topic from './screens/Topic.jsx'
-import Workspace from './screens/Workspace.jsx'
-import * as api from './api.js'
-import { toCards, isActionable, testPathFor } from './adapt.js'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import Dashboard from './screens/Dashboard'
+import Topic from './screens/Topic'
+import Workspace from './screens/Workspace'
+import * as api from './api'
+import { toCards, isActionable, testPathFor, Card } from './adapt'
 
 const mono = "'JetBrains Mono', monospace"
 
-function Rail({ projectName, topicCount, readyCount }) {
+interface RailProps {
+  projectName: string
+  topicCount: number
+  readyCount: number
+}
+
+function Rail({ projectName, topicCount, readyCount }: RailProps) {
   const label = () => ({
     fontFamily: mono,
     fontSize: 10.5,
@@ -78,7 +84,15 @@ function Rail({ projectName, topicCount, readyCount }) {
   )
 }
 
-function TopBar({ projectName, crumbTopic, isWorkspace, statsLabel, onExit }) {
+interface TopBarProps {
+  projectName: string
+  crumbTopic?: string
+  isWorkspace: boolean
+  statsLabel: string
+  onExit: () => void
+}
+
+function TopBar({ projectName, crumbTopic, isWorkspace, statsLabel, onExit }: TopBarProps) {
   return (
     <div style={{ height: 52, flex: 'none', borderBottom: '1px solid var(--bd)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 22px', background: 'var(--bg)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 13 }}>
@@ -104,7 +118,12 @@ function TopBar({ projectName, crumbTopic, isWorkspace, statsLabel, onExit }) {
   )
 }
 
-function CenterNote({ children, tone }) {
+interface CenterNoteProps {
+  children: React.ReactNode
+  tone?: 'error'
+}
+
+function CenterNote({ children, tone }: CenterNoteProps) {
   const color = tone === 'error' ? 'var(--red)' : 'var(--mut)'
   return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
@@ -113,29 +132,50 @@ function CenterNote({ children, tone }) {
   )
 }
 
+type Screen = 'dashboard' | 'topic' | 'workspace'
+type Phase = 'idle' | 'creating' | 'running' | 'fail' | 'pass' | 'error'
+
+interface FileItem {
+  path: string
+  name: string | undefined
+  editable: boolean
+  modified?: boolean
+}
+
+interface ThreadMessage {
+  role: 'user' | 'coach' | 'thinking'
+  text?: string
+}
+
+interface HistStats {
+  elapsed: string
+  runs: number
+  concept: number
+}
+
 export default function App() {
-  const [screen, setScreen] = useState('dashboard')
-  const [project, setProject] = useState(null)
-  const [cards, setCards] = useState([])
-  const [loadError, setLoadError] = useState(null)
+  const [screen, setScreen] = useState<Screen>('dashboard')
+  const [project, setProject] = useState<api.Project | null>(null)
+  const [cards, setCards] = useState<Card[]>([])
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const [topicDetail, setTopicDetail] = useState(null) // full detail of the open topic
-  const [check, setCheck] = useState(null) // active check {id, target_file, test_command,...}
-  const [activeFile, setActiveFile] = useState(null) // relative path of selected file
-  const [files, setFiles] = useState([]) // [{path, name, editable}]
-  const [code, setCode] = useState('') // editable target file content
-  const [roContent, setRoContent] = useState({}) // path -> read-only content
+  const [topicDetail, setTopicDetail] = useState<api.TopicDetail | null>(null)
+  const [check, setCheck] = useState<api.Check | null>(null)
+  const [activeFile, setActiveFile] = useState<string | null>(null)
+  const [files, setFiles] = useState<FileItem[]>([])
+  const [code, setCode] = useState('')
+  const [roContent, setRoContent] = useState<Record<string, string>>({})
 
   const [running, setRunning] = useState(false)
-  const [phase, setPhase] = useState('idle') // idle | creating | running | fail | pass | error
+  const [phase, setPhase] = useState<Phase>('idle')
   const [runOutput, setRunOutput] = useState('')
   const [runs, setRuns] = useState(0)
   const [elapsedMin, setElapsedMin] = useState(0)
 
-  const [thread, setThread] = useState([])
+  const [thread, setThread] = useState<ThreadMessage[]>([])
   const [coachInput, setCoachInput] = useState('')
-  const [histStats, setHistStats] = useState(null)
+  const [histStats, setHistStats] = useState<HistStats | null>(null)
   const [showLog, setShowLog] = useState(false)
 
   const [taskW, setTaskW] = useState(280)
@@ -158,7 +198,7 @@ export default function App() {
         setProject(projects[0] || null)
         setCards(toCards(topics))
       } catch (e) {
-        if (alive) setLoadError(e.message || String(e))
+        if (alive) setLoadError(e instanceof Error ? e.message : String(e))
       } finally {
         if (alive) setLoading(false)
       }
@@ -171,22 +211,22 @@ export default function App() {
   // restore persisted pane widths
   useEffect(() => {
     try {
-      const tw = parseInt(localStorage.getItem('lg_taskW'), 10)
-      const cw = parseInt(localStorage.getItem('lg_coachW'), 10)
+      const tw = parseInt(localStorage.getItem('lg_taskW') || '280', 10)
+      const cw = parseInt(localStorage.getItem('lg_coachW') || '372', 10)
       if (!isNaN(tw)) setTaskW(Math.min(460, Math.max(210, tw)))
       if (!isNaN(cw)) setCoachW(Math.min(620, Math.max(300, cw)))
     } catch (_) {}
   }, [])
 
   // ---- navigation ----
-  const openTopic = useCallback(async (card) => {
+  const openTopic = useCallback(async (card: Card) => {
     setShowLog(false)
     try {
       const detail = await api.getTopic(card.id)
       setTopicDetail(detail)
       setScreen('topic')
     } catch (e) {
-      setLoadError(e.message || String(e))
+      setLoadError(e instanceof Error ? e.message : String(e))
     }
   }, [])
 
@@ -232,12 +272,12 @@ export default function App() {
       setFiles(fileList)
       setPhase('idle')
     } catch (e) {
-      setRunOutput(`Could not create sandbox: ${e.message || e}`)
+      setRunOutput(`Could not create sandbox: ${e instanceof Error ? e.message : String(e)}`)
       setPhase('error')
     }
   }, [topicDetail])
 
-  const onCode = useCallback((e) => {
+  const onCode = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const v = e.target.value
     codeRef.current = v
     setCode(v)
@@ -257,7 +297,7 @@ export default function App() {
       setRuns((n) => n + 1)
       setElapsedMin(mins)
     } catch (e) {
-      setRunOutput(`Check runner error: ${e.message || e}`)
+      setRunOutput(`Check runner error: ${e instanceof Error ? e.message : String(e)}`)
       setPhase('error')
     } finally {
       setRunning(false)
@@ -266,7 +306,7 @@ export default function App() {
 
   // ---- coach ----
   const pushCoach = useCallback(
-    async (text) => {
+    async (text: string) => {
       const t = (text || '').trim()
       if (!t || !check) return
       setThread((th) => [...th, { role: 'user', text: t }, { role: 'thinking' }])
@@ -283,7 +323,7 @@ export default function App() {
         setThread((th) => {
           const copy = th.slice()
           const i = copy.findIndex((m) => m.role === 'thinking')
-          if (i >= 0) copy[i] = { role: 'coach', text: `Coach unavailable: ${e.message || e}` }
+          if (i >= 0) copy[i] = { role: 'coach', text: `Coach unavailable: ${e instanceof Error ? e.message : String(e)}` }
           return copy
         })
       }
@@ -292,12 +332,12 @@ export default function App() {
   )
 
   const sendCoach = useCallback(() => pushCoach(coachInput), [pushCoach, coachInput])
-  const onCoachInput = useCallback((e) => setCoachInput(e.target.value), [])
+  const onCoachInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => setCoachInput(e.target.value), [])
   const onCoachKey = useCallback(
-    (e) => {
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
-        pushCoach(e.target.value)
+        pushCoach(e.currentTarget.value)
       }
     },
     [pushCoach],
@@ -323,12 +363,12 @@ export default function App() {
 
   // ---- drag-resize ----
   const startDrag = useCallback(
-    (which) => (e) => {
+    (which: 'task' | 'coach') => (e: React.MouseEvent) => {
       e.preventDefault()
       const startX = e.clientX
       const start = which === 'task' ? taskW : coachW
       let latest = start
-      const move = (ev) => {
+      const move = (ev: MouseEvent) => {
         const delta = ev.clientX - startX
         latest = which === 'task' ? Math.min(460, Math.max(210, start + delta)) : Math.min(620, Math.max(300, start - delta))
         if (which === 'task') setTaskW(latest)

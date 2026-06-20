@@ -2,16 +2,17 @@
 // design's voice: `## Heading` → the small mono section label, blank-line
 // paragraphs, inline **bold** and `code`. It asserts no structure the coach
 // didn't produce — unrecognized text just renders as paragraphs.
-import React from 'react'
 
 const mono = "'JetBrains Mono', monospace"
 
-const LABEL_COLOR = {
+const LABEL_COLOR: Record<string, string> = {
   'diagnostic question': 'var(--cool)',
   'suggested observation': 'var(--mut)',
 }
 
-function inline(text) {
+type Block = { type: 'h' | 'p'; text: string }
+
+function inline(text: string): React.ReactNode {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
   return parts.map((p, i) => {
     if (/^\*\*[^*]+\*\*$/.test(p))
@@ -30,9 +31,9 @@ function inline(text) {
   })
 }
 
-export function renderCoach(text) {
-  const blocks = []
-  let buf = []
+export function renderCoach(text: string): React.ReactNode {
+  const blocks: Block[] = []
+  let buf: string[] = []
   const flush = () => {
     if (buf.length) {
       blocks.push({ type: 'p', text: buf.join(' ').trim() })

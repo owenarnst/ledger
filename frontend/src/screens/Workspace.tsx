@@ -3,9 +3,9 @@
 // run verdict, and coaching are all live from the backend. The verdict comes
 // from the run's `passed` field — pytest's exit code is the oracle; the UI never
 // parses the test text for the result.
-import React from 'react'
-import { hl } from '../highlight.jsx'
-import { renderCoach } from '../coachmd.jsx'
+import { hl } from '../highlight'
+import { renderCoach } from '../coachmd'
+import * as api from '../api'
 
 const mono = "'JetBrains Mono', monospace"
 
@@ -17,7 +17,36 @@ const COACH_CHIPS = [
 
 const WITHHELD = /cannot provide (?:code|a patch)|can't (?:hand|give) you the patch|cannot give you the patch/i
 
-function banner(phase, runOutput, targetFile, testCommand) {
+type Phase = 'idle' | 'creating' | 'running' | 'fail' | 'pass' | 'error'
+
+interface WorkspaceProps {
+  topic: api.TopicDetail | null
+  check: api.Check | null
+  taskW: number
+  coachW: number
+  dragTask: (e: React.MouseEvent) => void
+  dragCoach: (e: React.MouseEvent) => void
+  files: any[]
+  activeFile: string | null
+  setActiveFile: (path: string) => void
+  code: string
+  roContent: Record<string, string>
+  onCode: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
+  phase: Phase
+  running: boolean
+  runOutput: string
+  runChecks: () => void
+  thread: any[]
+  coachInput: string
+  onCoachInput: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
+  onCoachKey: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
+  sendCoach: () => void
+  askChip: (q: string) => void
+  canComplete: boolean
+  completeCheck: () => void
+}
+
+function banner(phase: Phase, runOutput: string, targetFile: string | undefined, _testCommand: string | undefined) {
   const base = { padding: '9px 16px', fontFamily: mono, fontSize: 11.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }
   if (phase === 'creating')
     return {
@@ -76,13 +105,13 @@ export default function Workspace({
   askChip,
   canComplete,
   completeCheck,
-}) {
+}: WorkspaceProps) {
   const targetFile = check?.target_file
   const af = (files || []).find((f) => f.path === activeFile)
   const editable = !!af?.editable
-  const roText = editable ? '' : roContent[activeFile] || ''
-  const lineNos = (code || '').split('\n').map((_, i) => i + 1)
-  const roLineNos = roText.split('\n').map((_, i) => i + 1)
+  const roText = editable ? '' : (activeFile ? roContent[activeFile] || '' : '')
+  const lineNos = (code || '').split('\n').map((_: string, i: number) => i + 1)
+  const roLineNos = roText.split('\n').map((_: string, i: number) => i + 1)
   const b = banner(phase, runOutput, targetFile, check?.test_command)
 
   const testFile = (files || []).find((f) => !f.editable)
@@ -188,7 +217,7 @@ export default function Workspace({
               {editable ? (
                 <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', background: '#141310', position: 'relative' }}>
                   <div style={{ flex: 'none', width: 46, padding: '14px 0', textAlign: 'right', fontFamily: mono, fontSize: 13, lineHeight: '21px', color: '#46423a', userSelect: 'none', background: '#141310' }}>
-                    {lineNos.map((n) => (
+                    {lineNos.map((n: number) => (
                       <div key={n} style={{ paddingRight: 12 }}>
                         {n}
                       </div>

@@ -2,7 +2,6 @@
 // Returns an array of React nodes (one <div> per line). Used by both the
 // editor overlay and the read-only panes. The real editor can swap this for
 // Monaco later (build-plan.md) — the buffer contract is identical.
-import React from 'react'
 
 const KW = new Set([
   'def', 'class', 'return', 'import', 'from', 'for', 'in', 'if', 'else', 'elif', 'and', 'or', 'not',
@@ -12,15 +11,15 @@ const KW = new Set([
 const BUILTIN = new Set(['str', 'list', 'dict', 'int', 'float', 'bool', 'set', 'tuple', 'len', 'sorted', 'hashlib'])
 const C = { kw: '#b58ac9', str: '#cba36a', num: '#cf9b6a', fn: '#e3c479', builtin: '#83a0c4', self: '#8c8678', com: '#5f5a50' }
 
-export function hl(code, dim) {
+export function hl(code: string, dim: boolean): React.ReactNode {
   const base = dim ? '#9a9384' : '#ddd8cd'
   const lines = (code || '').split('\n')
-  return lines.map((line, li) => {
-    const spans = []
+  return lines.map((line: string, li: number) => {
+    const spans: React.ReactNode[] = []
     let k = 0
     let codePart = line
     let com = ''
-    let q = null
+    let q: string | null = null
     let hi = -1
     for (let i = 0; i < line.length; i++) {
       const ch = line[i]
@@ -38,11 +37,11 @@ export function hl(code, dim) {
       com = line.slice(hi)
     }
     const re = /("[^"]*"|'[^']*'|\b\d+\.?\d*\b|[A-Za-z_][A-Za-z0-9_]*|\s+|[^\sA-Za-z0-9_])/g
-    let m
+    let m: RegExpExecArray | null
     let prev = ''
     while ((m = re.exec(codePart))) {
       const t = m[0]
-      let col = null
+      let col: string | null = null
       let ital = false
       if (/^["']/.test(t)) col = C.str
       else if (/^\d/.test(t)) col = C.num
