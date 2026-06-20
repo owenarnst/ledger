@@ -8,7 +8,7 @@ from typing import Any
 
 from .coach import Coach, create_coach
 from .db import connect, initialize_schema
-from .ingestion import DEFAULT_PROVIDER, IngestionEvent
+from .ingestion import DEFAULT_PROVIDER, IngestionEvent, adapter_for
 from .sandbox import create_hero_sandbox, run_pytest
 
 
@@ -32,6 +32,8 @@ class LedgerRepository:
             initialize_schema(conn)
             if conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 0:
                 self._seed(conn)
+            else:
+                self._ensure_seeded_revisions(conn)
 
     def initialize_schema(self) -> None:
         with connect(self.db_path) as conn:
@@ -44,6 +46,10 @@ class LedgerRepository:
     def list_projects(self) -> list[dict[str, Any]]:
         with connect(self.db_path) as conn:
             return self._rows(conn.execute("SELECT * FROM projects ORDER BY created_at"))
+
+    def list_all_topics(self) -> list[dict[str, Any]]:
+        with connect(self.db_path) as conn:
+            return self._rows(conn.execute("SELECT * FROM topics ORDER BY rank"))
 
     def list_topics(self, project_slug: str) -> list[dict[str, Any]]:
         with connect(self.db_path) as conn:
@@ -112,6 +118,7 @@ class LedgerRepository:
         )
         project = self.initialize_project_from_repo(event.cwd)
         with connect(self.db_path) as conn:
+            self._upsert_session(conn, project["id"], event)
             cursor = conn.execute(
                 """
                 INSERT INTO hook_events (project_id, provider, event_type, branch, head_sha, payload_json)
@@ -134,6 +141,24 @@ class LedgerRepository:
         topics = self.extract_or_refresh_topics(project["id"])
         return {"project": project, "event": stored_event, "topics": topics}
 
+    def import_provider_sessions(self, provider: str, root: str | Path) -> dict[str, Any]:
+        adapter = adapter_for(provider)
+        events = adapter.read_sessions(root)
+        imported = []
+        topics: list[dict[str, Any]] = []
+        for event in events:
+            result = self.record_hook_event(
+                provider=event.provider,
+                event_type=event.event_type,
+                cwd=event.cwd,
+                branch=event.branch,
+                head_sha=event.head_sha,
+                payload=event.payload,
+            )
+            imported.append(result["event"])
+            topics = result["topics"]
+        return {"provider": provider, "imported": len(imported), "events": imported, "topics": topics}
+
     def extract_or_refresh_topics(self, project_id: str) -> list[dict[str, Any]]:
         with connect(self.db_path) as conn:
             project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
@@ -153,8 +178,18 @@ class LedgerRepository:
 
             payload = json.loads(latest_event["payload_json"])
             candidate_files = self._candidate_topic_files(Path(project["repo_path"]), payload)
+            if latest_event["head_sha"]:
+                conn.execute(
+                    """
+                    INSERT INTO commits (sha, project_id)
+                    VALUES (?, ?)
+                    ON CONFLICT(sha) DO NOTHING
+                    """,
+                    (latest_event["head_sha"], project_id),
+                )
             for rank, relative_path in enumerate(candidate_files, start=1):
                 topic_id = f"{project_id}-{self._slugify(relative_path)}"
+                revision_id = f"{topic_id}-rev-1"
                 title = f"Understand {relative_path}"
                 summary = f"{relative_path} changed in repository activity captured by Ledger."
                 why_now = self._hook_why_now(latest_event)
@@ -182,13 +217,42 @@ class LedgerRepository:
                         rank,
                     ),
                 )
+                conn.execute(
+                    """
+                    INSERT INTO topic_revisions
+                    (id, topic_id, revision, commit_sha, code_path, invariant, risk_class, fingerprint)
+                    VALUES (?, ?, 1, ?, ?, ?, 'repo_activity', ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        commit_sha = excluded.commit_sha,
+                        code_path = excluded.code_path,
+                        invariant = excluded.invariant,
+                        risk_class = excluded.risk_class,
+                        fingerprint = excluded.fingerprint
+                    """,
+                    (
+                        revision_id,
+                        topic_id,
+                        latest_event["head_sha"],
+                        relative_path,
+                        f"Understand and safely maintain {relative_path}.",
+                        f"{topic_id}:{latest_event['head_sha'] or 'unknown'}",
+                    ),
+                )
                 conn.execute("DELETE FROM evidence WHERE topic_id = ?", (topic_id,))
                 conn.executemany(
-                    "INSERT INTO evidence (topic_id, provider, kind, title, body) VALUES (?, ?, ?, ?, ?)",
+                    """
+                    INSERT INTO evidence
+                    (topic_id, provider, session_id, source_path, tool_sequence_json, link_confidence, kind, title, body)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
                     [
                         (
                             topic_id,
                             latest_event["provider"],
+                            None,
+                            None,
+                            "[]",
+                            "heuristic",
                             "code",
                             relative_path,
                             self._summarize_file(Path(project["repo_path"]) / relative_path),
@@ -196,11 +260,45 @@ class LedgerRepository:
                         (
                             topic_id,
                             latest_event["provider"],
+                            payload.get("session_id"),
+                            payload.get("source_path"),
+                            self._tool_sequence_json(payload),
+                            payload.get("link_confidence") or "heuristic",
+                            self._receipt_kind(latest_event["provider"]),
+                            self._hook_event_title(latest_event),
+                            self._hook_event_body(latest_event),
+                        ),
+                        (
+                            topic_id,
+                            latest_event["provider"],
+                            None,
+                            None,
+                            "[]",
+                            "heuristic",
                             "hook_event",
                             self._hook_event_title(latest_event),
                             self._hook_event_body(latest_event),
                         ),
                     ],
+                )
+                conn.execute("DELETE FROM revision_evidence WHERE topic_revision_id = ?", (revision_id,))
+                evidence_rows = conn.execute(
+                    "SELECT id, kind FROM evidence WHERE topic_id = ?",
+                    (topic_id,),
+                ).fetchall()
+                conn.executemany(
+                    """
+                    INSERT INTO revision_evidence (topic_revision_id, evidence_id, role, confidence)
+                    VALUES (?, ?, ?, 'heuristic')
+                    """,
+                    [(revision_id, row["id"], row["kind"]) for row in evidence_rows],
+                )
+                conn.execute(
+                    """
+                    INSERT INTO topic_events (topic_id, topic_revision_id, event_type, body)
+                    VALUES (?, ?, 'refreshed', ?)
+                    """,
+                    (topic_id, revision_id, self._hook_event_body(latest_event)),
                 )
             conn.commit()
             return self.list_topics(project["slug"])
@@ -211,24 +309,50 @@ class LedgerRepository:
             if not topic:
                 raise KeyError(topic_id)
             payload = dict(topic)
-            payload["evidence"] = self._rows(
-                conn.execute("SELECT provider, kind, title, body FROM evidence WHERE topic_id = ?", (topic_id,))
+            revision = self._current_revision(conn, topic_id)
+            payload["current_revision"] = dict(revision) if revision else None
+            payload["evidence"] = self._evidence_rows(
+                conn.execute(
+                    """
+                    SELECT provider, session_id, source_path, tool_sequence_json, link_confidence, kind, title, body
+                    FROM evidence
+                    WHERE topic_id = ?
+                    """,
+                    (topic_id,),
+                )
             )
             return payload
+
+    def get_session(self, session_id: str) -> dict[str, Any]:
+        with connect(self.db_path) as conn:
+            session = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            if not session:
+                raise KeyError(session_id)
+            return dict(session)
 
     def create_check(self, topic_id: str) -> dict[str, Any]:
         check_id = uuid.uuid4().hex
         sandbox_path = self.sandbox_root / check_id
         create_hero_sandbox(sandbox_path)
         with connect(self.db_path) as conn:
+            revision = self._current_revision(conn, topic_id)
+            if not revision:
+                raise KeyError(topic_id)
             conn.execute(
                 """
-                INSERT INTO checks (id, topic_id, state, sandbox_path, target_file, test_command)
-                VALUES (?, ?, 'in_progress', ?, 'retrieval/rerank.py', 'python -m pytest tests')
+                INSERT INTO checks (id, topic_id, topic_revision_id, state, sandbox_path, target_file, test_command)
+                VALUES (?, ?, ?, 'in_progress', ?, 'retrieval/rerank.py', 'python -m pytest tests')
                 """,
-                (check_id, topic_id, str(sandbox_path)),
+                (check_id, topic_id, revision["id"], str(sandbox_path)),
             )
             conn.execute("UPDATE topics SET state = 'in_progress' WHERE id = ?", (topic_id,))
+            conn.execute(
+                """
+                INSERT INTO topic_events (topic_id, topic_revision_id, event_type, body)
+                VALUES (?, ?, 'check_started', ?)
+                """,
+                (topic_id, revision["id"], check_id),
+            )
             conn.commit()
         return self.get_check(check_id)
 
@@ -254,21 +378,29 @@ class LedgerRepository:
 
     def run_check(self, check_id: str) -> dict[str, Any]:
         check = self.get_check(check_id)
-        result = run_pytest(Path(check["sandbox_path"]))
+        try:
+            result = run_pytest(Path(check["sandbox_path"]))
+            passed = result.passed
+            output = result.output
+            elapsed_ms = result.elapsed_ms
+        except Exception as exc:
+            passed = False
+            output = f"Check runner failed: {exc}"
+            elapsed_ms = 0
         with connect(self.db_path) as conn:
             conn.execute(
                 "INSERT INTO attempts (check_id, passed, output, elapsed_ms) VALUES (?, ?, ?, ?)",
-                (check_id, int(result.passed), result.output, result.elapsed_ms),
+                (check_id, int(passed), output, elapsed_ms),
             )
             conn.commit()
         return {
             "check_id": check_id,
-            "passed": result.passed,
-            "output": result.output,
-            "elapsed_ms": result.elapsed_ms,
+            "passed": passed,
+            "output": output,
+            "elapsed_ms": elapsed_ms,
         }
 
-    def complete_check(self, check_id: str) -> dict[str, Any]:
+    def complete_check(self, check_id: str, reflection: dict[str, str] | None = None) -> dict[str, Any]:
         check = self.get_check(check_id)
         with connect(self.db_path) as conn:
             conn.execute(
@@ -276,8 +408,54 @@ class LedgerRepository:
                 (check_id,),
             )
             conn.execute("UPDATE topics SET state = 'practiced' WHERE id = ?", (check["topic_id"],))
+            conn.execute(
+                """
+                INSERT INTO topic_events (topic_id, topic_revision_id, event_type, body)
+                VALUES (?, ?, 'practiced', ?)
+                """,
+                (check["topic_id"], check["topic_revision_id"], check_id),
+            )
+            if reflection:
+                conn.execute(
+                    """
+                    INSERT INTO reflections
+                    (check_id, topic_id, topic_revision_id, invariant, rationale, future_risk)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        check_id,
+                        check["topic_id"],
+                        check["topic_revision_id"],
+                        reflection.get("invariant", ""),
+                        reflection.get("rationale", ""),
+                        reflection.get("future_risk", ""),
+                    ),
+                )
             conn.commit()
         return self.get_check(check_id)
+
+    def list_topic_events(self, topic_id: str) -> list[dict[str, Any]]:
+        with connect(self.db_path) as conn:
+            return self._rows(
+                conn.execute(
+                    "SELECT * FROM topic_events WHERE topic_id = ? ORDER BY id",
+                    (topic_id,),
+                )
+            )
+
+    def list_reflections(self, topic_id: str) -> list[dict[str, Any]]:
+        with connect(self.db_path) as conn:
+            return self._rows(
+                conn.execute(
+                    """
+                    SELECT *
+                    FROM reflections
+                    WHERE topic_id = ?
+                    ORDER BY id DESC
+                    """,
+                    (topic_id,),
+                )
+            )
 
     def ask_coach(self, check_id: str, question: str, provider: str | None = None) -> dict[str, str]:
         check = self.get_check(check_id)
@@ -369,9 +547,61 @@ class LedgerRepository:
         return [dict(row) for row in cursor.fetchall()]
 
     @staticmethod
+    def _evidence_rows(cursor: Any) -> list[dict[str, Any]]:
+        rows = []
+        for row in cursor.fetchall():
+            payload = dict(row)
+            raw_sequence = payload.pop("tool_sequence_json", None)
+            payload["tool_sequence"] = json.loads(raw_sequence) if raw_sequence else []
+            rows.append(payload)
+        return rows
+
+    @staticmethod
+    def _current_revision(conn: Any, topic_id: str) -> Any:
+        return conn.execute(
+            """
+            SELECT *
+            FROM topic_revisions
+            WHERE topic_id = ?
+            ORDER BY revision DESC
+            LIMIT 1
+            """,
+            (topic_id,),
+        ).fetchone()
+
+    @staticmethod
     def _slugify(value: str) -> str:
         slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
         return slug or "repo"
+
+    @staticmethod
+    def _receipt_kind(provider: str) -> str:
+        if provider == DEFAULT_PROVIDER:
+            return "claude_receipt"
+        return f"{provider}_receipt"
+
+    @staticmethod
+    def _tool_sequence_json(payload: dict[str, Any]) -> str:
+        sequence = payload.get("tool_sequence") or []
+        if not isinstance(sequence, list):
+            sequence = []
+        return json.dumps([str(item) for item in sequence], sort_keys=True)
+
+    @staticmethod
+    def _upsert_session(conn: Any, project_id: str, event: IngestionEvent) -> None:
+        session_id = event.payload.get("session_id")
+        if not session_id:
+            return
+        conn.execute(
+            """
+            INSERT INTO sessions (id, project_id, provider, source_path, started_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(id) DO UPDATE SET
+                provider = excluded.provider,
+                source_path = excluded.source_path
+            """,
+            (str(session_id), project_id, event.provider, event.payload.get("source_path")),
+        )
 
     def _seed(self, conn: Any) -> None:
         conn.execute(
@@ -432,27 +662,213 @@ class LedgerRepository:
             """,
             topics,
         )
+        conn.execute(
+            """
+            INSERT INTO commits (sha, project_id)
+            VALUES ('demo-seed', 'project-docs-api')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions (id, project_id, provider, source_path)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                "claude-demo-session",
+                "project-docs-api",
+                "claude_code",
+                "~/.claude/projects/demo.jsonl",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO topic_revisions
+            (id, topic_id, revision, commit_sha, code_path, invariant, risk_class, fingerprint)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "tenant-cache-isolation-rev-1",
+                "tenant-cache-isolation",
+                1,
+                "demo-seed",
+                "retrieval/rerank.py",
+                "Candidate documents must be filtered by tenant_id before ranking.",
+                "persistence",
+                "demo-tenant-cache-isolation-v1",
+            ),
+        )
         conn.executemany(
-            "INSERT INTO evidence (topic_id, provider, kind, title, body) VALUES (?, 'claude_code', ?, ?, ?)",
+            """
+            INSERT INTO evidence
+            (topic_id, provider, session_id, source_path, tool_sequence_json, link_confidence, kind, title, body)
+            VALUES (?, 'claude_code', ?, ?, ?, ?, ?, ?, ?)
+            """,
             [
                 (
                     "tenant-cache-isolation",
+                    None,
+                    None,
+                    "[]",
+                    "hand_verified",
                     "code",
                     "retrieval/rerank.py",
                     "visible_documents_for_tenant filters candidate documents by tenant_id before ranking.",
                 ),
                 (
                     "tenant-cache-isolation",
+                    "claude-demo-session",
+                    "~/.claude/projects/demo.jsonl",
+                    json.dumps(
+                        [
+                            "Read retrieval/rerank.py",
+                            "Edit retrieval/rerank.py",
+                            "Bash python -m pytest",
+                        ]
+                    ),
+                    "hand_verified",
                     "claude_receipt",
                     "Claude Code session",
                     "Read retrieval/rerank.py -> Edit retrieval/rerank.py -> Bash python -m pytest.",
                 ),
                 (
                     "tenant-cache-isolation",
+                    None,
+                    None,
+                    "[]",
+                    "hand_verified",
                     "missing_reasoning",
                     "Trail scan",
                     "Searched ADRs, CONTEXT, README, comments, and commit messages; no tenant cache rationale found.",
                 ),
             ],
+        )
+        evidence_rows = conn.execute(
+            "SELECT id, kind FROM evidence WHERE topic_id = ?",
+            ("tenant-cache-isolation",),
+        ).fetchall()
+        conn.executemany(
+            """
+            INSERT INTO revision_evidence (topic_revision_id, evidence_id, role, confidence)
+            VALUES ('tenant-cache-isolation-rev-1', ?, ?, 'hand_verified')
+            """,
+            [(row["id"], row["kind"]) for row in evidence_rows],
+        )
+        conn.execute(
+            """
+            INSERT INTO topic_events (topic_id, topic_revision_id, event_type, body)
+            VALUES (?, ?, 'created', ?)
+            """,
+            (
+                "tenant-cache-isolation",
+                "tenant-cache-isolation-rev-1",
+                "Seeded demo topic revision.",
+            ),
+        )
+        conn.commit()
+
+    def _ensure_seeded_revisions(self, conn: Any) -> None:
+        topic = conn.execute(
+            "SELECT id FROM topics WHERE id = ?",
+            ("tenant-cache-isolation",),
+        ).fetchone()
+        if not topic:
+            return
+
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO sessions (id, project_id, provider, source_path)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                "claude-demo-session",
+                "project-docs-api",
+                "claude_code",
+                "~/.claude/projects/demo.jsonl",
+            ),
+        )
+        receipt = conn.execute(
+            """
+            SELECT id FROM evidence
+            WHERE topic_id = ? AND kind = 'claude_receipt'
+            """,
+            ("tenant-cache-isolation",),
+        ).fetchone()
+        if receipt:
+            conn.execute(
+                """
+                UPDATE evidence
+                SET
+                    provider = 'claude_code',
+                    session_id = ?,
+                    source_path = ?,
+                    tool_sequence_json = ?,
+                    link_confidence = 'hand_verified'
+                WHERE id = ?
+                """,
+                (
+                    "claude-demo-session",
+                    "~/.claude/projects/demo.jsonl",
+                    json.dumps(
+                        [
+                            "Read retrieval/rerank.py",
+                            "Edit retrieval/rerank.py",
+                            "Bash python -m pytest",
+                        ]
+                    ),
+                    receipt["id"],
+                ),
+            )
+
+        revision = conn.execute(
+            "SELECT id FROM topic_revisions WHERE id = ?",
+            ("tenant-cache-isolation-rev-1",),
+        ).fetchone()
+        if revision:
+            return
+
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO commits (sha, project_id)
+            VALUES ('demo-seed', 'project-docs-api')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO topic_revisions
+            (id, topic_id, revision, commit_sha, code_path, invariant, risk_class, fingerprint)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "tenant-cache-isolation-rev-1",
+                "tenant-cache-isolation",
+                1,
+                "demo-seed",
+                "retrieval/rerank.py",
+                "Candidate documents must be filtered by tenant_id before ranking.",
+                "persistence",
+                "demo-tenant-cache-isolation-v1",
+            ),
+        )
+        evidence_rows = conn.execute(
+            "SELECT id, kind FROM evidence WHERE topic_id = ?",
+            ("tenant-cache-isolation",),
+        ).fetchall()
+        conn.executemany(
+            """
+            INSERT INTO revision_evidence (topic_revision_id, evidence_id, role, confidence)
+            VALUES ('tenant-cache-isolation-rev-1', ?, ?, 'hand_verified')
+            """,
+            [(row["id"], row["kind"]) for row in evidence_rows],
+        )
+        conn.execute(
+            """
+            INSERT INTO topic_events (topic_id, topic_revision_id, event_type, body)
+            VALUES (?, ?, 'created', ?)
+            """,
+            (
+                "tenant-cache-isolation",
+                "tenant-cache-isolation-rev-1",
+                "Backfilled demo topic revision.",
+            ),
         )
         conn.commit()

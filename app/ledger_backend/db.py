@@ -15,6 +15,24 @@ CREATE TABLE IF NOT EXISTS projects (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS commits (
+    sha TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    parent_sha TEXT,
+    committed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    provider TEXT NOT NULL,
+    source_path TEXT,
+    started_at TEXT,
+    ended_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS topics (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),
@@ -29,13 +47,48 @@ CREATE TABLE IF NOT EXISTS topics (
     rank INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS topic_revisions (
+    id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL REFERENCES topics(id),
+    revision INTEGER NOT NULL,
+    commit_sha TEXT,
+    code_path TEXT NOT NULL,
+    invariant TEXT NOT NULL,
+    risk_class TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(topic_id, revision)
+);
+
 CREATE TABLE IF NOT EXISTS evidence (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     topic_id TEXT NOT NULL REFERENCES topics(id),
     provider TEXT NOT NULL DEFAULT 'claude_code',
+    session_id TEXT REFERENCES sessions(id),
+    source_path TEXT,
+    tool_sequence_json TEXT NOT NULL DEFAULT '[]',
+    link_confidence TEXT NOT NULL DEFAULT 'heuristic',
     kind TEXT NOT NULL,
     title TEXT NOT NULL,
     body TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS revision_evidence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_revision_id TEXT NOT NULL REFERENCES topic_revisions(id),
+    evidence_id INTEGER NOT NULL REFERENCES evidence(id),
+    role TEXT NOT NULL,
+    confidence TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS topic_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id TEXT NOT NULL REFERENCES topics(id),
+    topic_revision_id TEXT REFERENCES topic_revisions(id),
+    event_type TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS hook_events (
@@ -49,9 +102,21 @@ CREATE TABLE IF NOT EXISTS hook_events (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS reflections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_id TEXT NOT NULL REFERENCES checks(id),
+    topic_id TEXT NOT NULL REFERENCES topics(id),
+    topic_revision_id TEXT REFERENCES topic_revisions(id),
+    invariant TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    future_risk TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS checks (
     id TEXT PRIMARY KEY,
     topic_id TEXT NOT NULL REFERENCES topics(id),
+    topic_revision_id TEXT REFERENCES topic_revisions(id),
     state TEXT NOT NULL,
     sandbox_path TEXT NOT NULL,
     target_file TEXT NOT NULL,
@@ -82,6 +147,12 @@ MIGRATIONS = [
     "ALTER TABLE topics ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude_code'",
     "ALTER TABLE evidence ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude_code'",
     "ALTER TABLE hook_events ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude_code'",
+    "ALTER TABLE checks ADD COLUMN topic_revision_id TEXT REFERENCES topic_revisions(id)",
+    "ALTER TABLE evidence ADD COLUMN session_id TEXT REFERENCES sessions(id)",
+    "ALTER TABLE evidence ADD COLUMN source_path TEXT",
+    "ALTER TABLE evidence ADD COLUMN tool_sequence_json TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE evidence ADD COLUMN link_confidence TEXT NOT NULL DEFAULT 'heuristic'",
+    "ALTER TABLE reflections ADD COLUMN topic_revision_id TEXT REFERENCES topic_revisions(id)",
 ]
 
 

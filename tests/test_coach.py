@@ -39,8 +39,8 @@ def test_codex_coach_uses_noninteractive_exec_with_read_only_sandbox():
     assert command[-1] == "-"
     assert "--sandbox" in command
     assert command[command.index("--sandbox") + 1] == "read-only"
-    assert "--ask-for-approval" in command
-    assert command[command.index("--ask-for-approval") + 1] == "never"
+    assert "--ask-for-approval" not in command
+    assert "--skip-git-repo-check" in command
     assert "--ephemeral" in command
 
 
