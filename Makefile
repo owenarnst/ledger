@@ -20,7 +20,7 @@ frontend:
 
 backend:
 	@echo "Starting backend dev server on http://localhost:8000"
-	@uvicorn backend.api:app --reload --port 8000 --host 0.0.0.0
+	@. .venv/bin/activate && uvicorn backend.api:app --reload --port 8000 --host 0.0.0.0
 
 install: install-frontend install-backend
 
