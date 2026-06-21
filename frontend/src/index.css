@@ -103,3 +103,12 @@ body {
 .lg-textarea::placeholder {
   color: var(--faint);
 }
+
+/* Code surfaces: keep operators literal. JetBrains Mono ligates >=, <=, !=, ==,
+   -> etc. into single math glyphs; that's wrong for an editor showing real code.
+   Applied to the editor, its highlight overlay, and read-only/output panes so
+   the transparent textarea and the highlighted <pre> stay glyph-for-glyph aligned. */
+.lg-code {
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
+}
