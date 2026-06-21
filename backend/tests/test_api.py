@@ -9,9 +9,9 @@ def test_api_exposes_project_topic_and_check_flow(tmp_path):
 
     projects = client.get("/api/projects")
     assert projects.status_code == 200
-    assert projects.json()[0]["slug"] == "docs-api"
+    assert projects.json()[0]["slug"] == "docs-search-api"
 
-    topics = client.get("/api/projects/docs-api/topics")
+    topics = client.get("/api/projects/docs-search-api/topics")
     assert topics.status_code == 200
     topic_id = topics.json()[0]["id"]
 

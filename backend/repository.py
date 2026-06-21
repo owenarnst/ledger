@@ -66,6 +66,29 @@ class LedgerRepository:
                 )
             )
 
+    def reconcile_head(self, cwd: str | Path, current_head: str | None) -> dict[str, Any]:
+        """At SessionStart, capture the current HEAD if it differs from the last
+        recorded one — catches pulls/rebases/commits whose post-commit hook never ran."""
+        project = self.initialize_project_from_repo(cwd)
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT head_sha FROM hook_events "
+                "WHERE project_id = ? AND head_sha IS NOT NULL "
+                "ORDER BY rowid DESC LIMIT 1",
+                (project["id"],),
+            ).fetchone()
+        last = row["head_sha"] if row else None
+        if current_head and current_head != last:
+            self.record_hook_event(
+                provider="git",
+                event_type="session-reconcile",
+                cwd=cwd,
+                head_sha=current_head,
+                payload={"reconciled_from": last},
+            )
+            return {"reconciled": True, "from": last, "to": current_head}
+        return {"reconciled": False, "head": current_head}
+
     def initialize_project_from_repo(
         self,
         repo_path: str | Path,
@@ -606,7 +629,7 @@ class LedgerRepository:
     def _seed(self, conn: Any) -> None:
         conn.execute(
             "INSERT INTO projects (id, slug, name, repo_path) VALUES (?, ?, ?, ?)",
-            ("project-docs-api", "docs-api", "Docs API", "/demo/docs-api"),
+            ("project-docs-search-api", "docs-search-api", "Docs Search API", str(Path.home() / "Projects" / "docs-search-api")),
         )
         topics = [
             (
@@ -658,14 +681,14 @@ class LedgerRepository:
             """
             INSERT INTO topics
             (id, project_id, provider, title, state, summary, why_now, risk_class, caller_count, claude_authored, rank)
-            VALUES (?, 'project-docs-api', 'claude_code', ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, 'project-docs-search-api', 'claude_code', ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             topics,
         )
         conn.execute(
             """
             INSERT INTO commits (sha, project_id)
-            VALUES ('demo-seed', 'project-docs-api')
+            VALUES ('demo-seed', 'project-docs-search-api')
             """
         )
         conn.execute(
@@ -675,7 +698,7 @@ class LedgerRepository:
             """,
             (
                 "claude-demo-session",
-                "project-docs-api",
+                "project-docs-search-api",
                 "claude_code",
                 "~/.claude/projects/demo.jsonl",
             ),
@@ -781,7 +804,7 @@ class LedgerRepository:
             """,
             (
                 "claude-demo-session",
-                "project-docs-api",
+                "project-docs-search-api",
                 "claude_code",
                 "~/.claude/projects/demo.jsonl",
             ),
@@ -829,7 +852,7 @@ class LedgerRepository:
         conn.execute(
             """
             INSERT OR IGNORE INTO commits (sha, project_id)
-            VALUES ('demo-seed', 'project-docs-api')
+            VALUES ('demo-seed', 'project-docs-search-api')
             """
         )
         conn.execute(

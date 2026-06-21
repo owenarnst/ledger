@@ -160,14 +160,14 @@ def test_hook_spool_drains_fifo_json_events(tmp_path):
 
 
 def test_session_start_nudge_reports_ready_checks(tmp_path):
-    repo_path = tmp_path / "docs-api"
+    repo_path = tmp_path / "docs-search-api"
     repo_path.mkdir()
     repo = LedgerRepository(tmp_path / "ledger.db")
     repo.initialize()
 
     line = build_session_start_nudge(repo, cwd=repo_path, base_url="http://127.0.0.1:4317")
 
-    assert line == "Ledger: 3 checks ready for docs-api · Open http://127.0.0.1:4317/p/docs-api"
+    assert line == "Ledger: 3 checks ready for docs-search-api · Open http://127.0.0.1:4317/p/docs-search-api"
 
 
 def test_reset_ledger_recreates_database_and_clears_spool(tmp_path):
@@ -181,14 +181,14 @@ def test_reset_ledger_recreates_database_and_clears_spool(tmp_path):
 
     fresh = LedgerRepository(db_path)
     fresh.initialize()
-    assert fresh.list_projects()[0]["slug"] == "docs-api"
+    assert fresh.list_projects()[0]["slug"] == "docs-search-api"
     assert spool.pending_count() == 0
 
 
 def test_cli_reset_and_nudge_commands(tmp_path, capsys):
     db_path = tmp_path / "ledger.db"
     sandbox_root = tmp_path / "sandboxes"
-    repo_path = tmp_path / "docs-api"
+    repo_path = tmp_path / "docs-search-api"
     repo_path.mkdir()
 
     assert main(["reset", "--db", str(db_path), "--sandbox-root", str(sandbox_root)]) == 0
@@ -196,4 +196,4 @@ def test_cli_reset_and_nudge_commands(tmp_path, capsys):
 
     output = capsys.readouterr().out
     assert "Reset Ledger at" in output
-    assert "Ledger: 3 checks ready for docs-api" in output
+    assert "Ledger: 3 checks ready for docs-search-api" in output

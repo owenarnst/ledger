@@ -1,10 +1,21 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 from pathlib import Path
 
 from .api import app
-from .hooks import DEFAULT_SPOOL_DIR, build_session_start_nudge, drain_spool, reset_ledger
+from .hooks import (
+    DEFAULT_BASE_URL,
+    DEFAULT_SPOOL_DIR,
+    build_session_start_nudge,
+    drain_spool,
+    install_hooks,
+    reset_ledger,
+    session_start,
+    spool_commit,
+)
 from .repository import DEFAULT_DB_PATH, DEFAULT_SANDBOX_ROOT, LedgerRepository
 
 __all__ = ["app", "main"]
@@ -29,6 +40,23 @@ def build_parser() -> argparse.ArgumentParser:
     drain.add_argument("--db", default=str(DEFAULT_DB_PATH))
     drain.add_argument("--sandbox-root", default=str(DEFAULT_SANDBOX_ROOT))
     drain.add_argument("--spool-dir", default=str(DEFAULT_SPOOL_DIR))
+
+    spool = subcommands.add_parser("spool-commit", help="Queue a post-commit event (called by the git hook).")
+    spool.add_argument("--cwd", required=True)
+    spool.add_argument("--spool-dir", default=str(DEFAULT_SPOOL_DIR))
+
+    session = subcommands.add_parser(
+        "session-start", help="Drain spool, reconcile HEAD, emit the SessionStart hook envelope."
+    )
+    session.add_argument("--db", default=str(DEFAULT_DB_PATH))
+    session.add_argument("--sandbox-root", default=str(DEFAULT_SANDBOX_ROOT))
+    session.add_argument("--spool-dir", default=str(DEFAULT_SPOOL_DIR))
+    session.add_argument("--cwd", required=True)
+    session.add_argument("--base-url", default=DEFAULT_BASE_URL)
+
+    install = subcommands.add_parser("install", help="Install Ledger's git + Claude hooks into a repo.")
+    install.add_argument("--repo", required=True)
+    install.add_argument("--base-url", default=DEFAULT_BASE_URL)
     return parser
 
 
@@ -52,6 +80,36 @@ def main(argv: list[str] | None = None) -> int:
         repo.initialize()
         result = drain_spool(repo, spool_dir=Path(args.spool_dir))
         print(f"Imported {result['imported']} hook events")
+        return 0
+    if args.command == "spool-commit":
+        path = spool_commit(args.cwd, spool_dir=Path(args.spool_dir))
+        print(f"Spooled commit event -> {path}")
+        return 0
+    if args.command == "session-start":
+        repo = LedgerRepository(db_path=Path(args.db), sandbox_root=Path(args.sandbox_root))
+        repo.initialize()
+        result = session_start(
+            repo, cwd=args.cwd, base_url=args.base_url, spool_dir=Path(args.spool_dir)
+        )
+        # stdout must be the JSON envelope Claude Code consumes; status goes to stderr.
+        print(json.dumps(result["envelope"]))
+        print(
+            f"[ledger] {result['line']} "
+            f"(drained {result['drained']}, reconciled={result['reconciled'].get('reconciled')})",
+            file=sys.stderr,
+        )
+        return 0
+    if args.command == "install":
+        result = install_hooks(args.repo, interpreter=sys.executable, base_url=args.base_url)
+        print(f"Installed Ledger hooks into {result['repo']}")
+        print(f"  git post-commit : {result['post_commit']}")
+        print(f"  claude settings : {result['settings']}")
+        print(f"  interpreter     : {result['interpreter']}")
+        if result["local_override"]:
+            print(
+                "  WARNING: .claude/settings.local.json exists and takes precedence — "
+                "the SessionStart hook there will win over settings.json."
+            )
         return 0
     raise AssertionError(f"unhandled command: {args.command}")
 
