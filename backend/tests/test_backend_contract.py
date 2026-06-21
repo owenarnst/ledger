@@ -54,6 +54,51 @@ def test_run_check_records_graceful_failure_when_runner_errors(tmp_path, monkeyp
     assert repo.get_check(check["id"])["run_count"] == 1
 
 
+def test_pseudocode_comments_preserve_code_and_mark_suspicious_line(tmp_path):
+    repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
+    repo.initialize()
+    check = repo.create_check("tenant-cache-isolation")
+    original = repo.read_check_file(check["id"], "retrieval/rerank.py")["content"]
+
+    result = repo.pseudocode_comments(check["id"], "retrieval/rerank.py")
+
+    assert result["changed"] is True
+    assert "return list(documents)" in result["content"]
+    assert "Plan: accept the input collection and the requested tenant." in result["content"]
+    assert "requested tenant" in result["content"]
+    assert result["content"].count("return list(documents)") == original.count("return list(documents)")
+    assert "LEDGER" not in result["content"]
+    assert "Check this line:" not in result["content"]
+
+
+def test_pseudocode_comments_are_idempotent(tmp_path):
+    repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
+    repo.initialize()
+    check = repo.create_check("tenant-cache-isolation")
+
+    first = repo.pseudocode_comments(check["id"], "retrieval/rerank.py")["content"]
+    second = repo.pseudocode_comments(check["id"], "retrieval/rerank.py")["content"]
+
+    assert second == first
+
+
+def test_pseudocode_comments_remove_legacy_check_line_comments(tmp_path):
+    repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
+    repo.initialize()
+    check = repo.create_check("tenant-cache-isolation")
+    file_state = repo.read_check_file(check["id"], "retrieval/rerank.py")
+    with_legacy = file_state["content"].replace(
+        "    return list(documents)",
+        "    # Check this line: compare this with the invariant: Candidate documents must be filtered by tenant_id before ranking.\n    return list(documents)",
+    )
+    repo.update_check_file(check["id"], "retrieval/rerank.py", with_legacy)
+
+    result = repo.pseudocode_comments(check["id"], "retrieval/rerank.py")
+
+    assert "Check this line:" not in result["content"]
+    assert "return list(documents)" in result["content"]
+
+
 def test_contract_alias_routes_are_registered(tmp_path):
     app = create_app(db_path=tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
     paths = {route.path for route in app.routes}
@@ -62,6 +107,7 @@ def test_contract_alias_routes_are_registered(tmp_path):
     assert "/api/checks" in paths
     assert "/api/coach" in paths
     assert "/api/reset" in paths
+    assert "/api/checks/{check_id}/pseudocode-comments" in paths
     assert "/api/topics/{topic_id}/reflections" in paths
 
 

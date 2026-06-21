@@ -20,6 +20,10 @@ class CoachRequest(BaseModel):
     provider: str | None = None
 
 
+class PseudocodeCommentsRequest(BaseModel):
+    file_path: str
+
+
 class CheckRequest(BaseModel):
     topic_id: str
 
@@ -149,6 +153,17 @@ def create_app(
             return repo.get_check(check_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="check not found") from exc
+
+    @app.post("/api/checks/{check_id}/pseudocode-comments")
+    def pseudocode_comments(check_id: str, payload: PseudocodeCommentsRequest) -> dict:
+        try:
+            return repo.pseudocode_comments(check_id, payload.file_path)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="check not found") from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="file not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/checks/{check_id}/files/{file_path:path}")
     def read_file(check_id: str, file_path: str) -> dict:

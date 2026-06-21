@@ -36,7 +36,7 @@ def create_hero_sandbox(destination: Path) -> Path:
 def run_pytest(sandbox_path: Path) -> CheckResult:
     started = time.monotonic()
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests"],
+        [sys.executable, "-m", "pytest", "-s", "tests"],
         cwd=sandbox_path,
         text=True,
         stdout=subprocess.PIPE,

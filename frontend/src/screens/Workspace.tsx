@@ -3,6 +3,7 @@
 // run verdict, and coaching are all live from the backend. The verdict comes
 // from the run's `passed` field — pytest's exit code is the oracle; the UI never
 // parses the test text for the result.
+import { useState } from 'react'
 import { hl } from '../highlight'
 import { renderCoach } from '../coachmd'
 import * as api from '../api'
@@ -34,10 +35,15 @@ interface WorkspaceProps {
   onCode: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
   phase: Phase
   running: boolean
+  pseudocodeRunning: boolean
+  pseudocodeMode: 'hints' | 'prints'
   runOutput: string
   runChecks: () => void
+  addPseudocodeComments: () => void
   thread: any[]
   coachInput: string
+  coachProvider: 'claude-code' | 'codex-exec'
+  onCoachProvider: (provider: 'claude-code' | 'codex-exec') => void
   onCoachInput: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
   onCoachKey: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
   sendCoach: () => void
@@ -95,10 +101,15 @@ export default function Workspace({
   onCode,
   phase,
   running,
+  pseudocodeRunning,
+  pseudocodeMode,
   runOutput,
   runChecks,
+  addPseudocodeComments,
   thread,
   coachInput,
+  coachProvider,
+  onCoachProvider,
   onCoachInput,
   onCoachKey,
   sendCoach,
@@ -113,6 +124,7 @@ export default function Workspace({
   const lineNos = (code || '').split('\n').map((_: string, i: number) => i + 1)
   const roLineNos = roText.split('\n').map((_: string, i: number) => i + 1)
   const b = banner(phase, runOutput, targetFile, check?.test_command)
+  const [editorScroll, setEditorScroll] = useState({ top: 0, left: 0 })
 
   const testFile = (files || []).find((f) => !f.editable)
   const testContent = testFile ? roContent[testFile.path] || '' : ''
@@ -209,6 +221,25 @@ export default function Workspace({
               <div style={{ flex: 'none', height: 38, borderBottom: '1px solid var(--bd)', background: 'var(--panel)', display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', fontFamily: mono, fontSize: 11.5, color: 'var(--mut)' }}>
                 <span style={{ opacity: 0.7 }}>▾</span>
                 {af?.name || activeFile || '—'}
+                {editable && (
+                  <button
+                    onClick={addPseudocodeComments}
+                    disabled={pseudocodeRunning}
+                    style={{
+                      marginLeft: 'auto',
+                      fontFamily: mono,
+                      fontSize: 10.5,
+                      color: pseudocodeRunning ? 'var(--faint)' : 'var(--accent)',
+                      background: pseudocodeRunning ? 'rgba(255,255,255,0.03)' : 'rgba(200,116,77,0.08)',
+                      border: '1px solid rgba(200,116,77,0.28)',
+                      borderRadius: 6,
+                      padding: '4px 8px',
+                      cursor: pseudocodeRunning ? 'default' : 'pointer',
+                    }}
+                  >
+                    {pseudocodeRunning ? (pseudocodeMode === 'prints' ? 'asking coach…' : 'typing hints…') : pseudocodeMode === 'prints' ? 'Ask coach about prints' : 'Add pseudocode hints'}
+                  </button>
+                )}
                 {!editable && activeFile && (
                   <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--faint)', border: '1px solid var(--bd2)', padding: '1px 6px', borderRadius: 4 }}>read-only</span>
                 )}
@@ -216,19 +247,40 @@ export default function Workspace({
 
               {editable ? (
                 <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', background: '#141310', position: 'relative' }}>
-                  <div style={{ flex: 'none', width: 46, padding: '14px 0', textAlign: 'right', fontFamily: mono, fontSize: 13, lineHeight: '21px', color: '#46423a', userSelect: 'none', background: '#141310' }}>
-                    {lineNos.map((n: number) => (
-                      <div key={n} style={{ paddingRight: 12 }}>
-                        {n}
-                      </div>
-                    ))}
+                  <div style={{ flex: 'none', width: 46, overflow: 'hidden', fontFamily: mono, fontSize: 13, lineHeight: '21px', color: '#46423a', userSelect: 'none', background: '#141310' }}>
+                    <div style={{ padding: '14px 0', textAlign: 'right', transform: `translateY(${-editorScroll.top}px)` }}>
+                      {lineNos.map((n: number) => (
+                        <div key={n} style={{ paddingRight: 12 }}>
+                          {n}
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
-                    <pre style={{ margin: 0, padding: '14px 16px', fontFamily: mono, fontSize: 13, lineHeight: '21px', whiteSpace: 'pre', pointerEvents: 'none', minHeight: '100%' }}>{hl(code, false)}</pre>
+                  <div style={{ flex: 1, minWidth: 0, position: 'relative', overflow: 'hidden' }}>
+                    <pre
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        margin: 0,
+                        padding: '14px 16px',
+                        fontFamily: mono,
+                        fontSize: 13,
+                        lineHeight: '21px',
+                        whiteSpace: 'pre',
+                        pointerEvents: 'none',
+                        minWidth: 'max-content',
+                        minHeight: '100%',
+                        transform: `translate(${-editorScroll.left}px, ${-editorScroll.top}px)`,
+                      }}
+                    >
+                      {hl(code, false)}
+                    </pre>
                     <textarea
+                      className="lg-scroll"
                       spellCheck="false"
                       value={code}
                       onChange={onCode}
+                      onScroll={(e) => setEditorScroll({ top: e.currentTarget.scrollTop, left: e.currentTarget.scrollLeft })}
                       style={{
                         position: 'absolute',
                         inset: 0,
@@ -337,6 +389,16 @@ export default function Workspace({
           </div>
 
           <div style={{ flex: 'none', borderTop: '1px solid var(--bd)', background: 'var(--panel)', padding: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <select
+                value={coachProvider}
+                onChange={(e) => onCoachProvider(e.target.value as 'claude-code' | 'codex-exec')}
+                style={{ background: 'var(--bg)', border: '1px solid var(--bd2)', color: 'var(--tx)', borderRadius: 8, padding: '7px 9px', fontFamily: "'Geist', sans-serif", fontSize: 12.5, outline: 'none' }}
+              >
+                <option value="claude-code">Claude</option>
+                <option value="codex-exec">Codex</option>
+              </select>
+            </div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
               {COACH_CHIPS.map((ch, i) => (
                 <div

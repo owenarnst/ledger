@@ -9,6 +9,7 @@ from typing import Any
 from .coach import Coach, create_coach
 from .db import connect, initialize_schema
 from .ingestion import DEFAULT_PROVIDER, IngestionEvent, adapter_for
+from .pseudocode import build_pseudocode_comments
 from .sandbox import create_hero_sandbox, run_pytest
 
 
@@ -498,6 +499,20 @@ class LedgerRepository:
             )
             conn.commit()
         return {"question": question, "provider": provider or "default", "response": response}
+
+    def pseudocode_comments(self, check_id: str, relative_path: str) -> dict[str, Any]:
+        check = self.get_check(check_id)
+        topic = self.get_topic(check["topic_id"])
+        current = self.read_check_file(check_id, relative_path)["content"]
+        reference_path = Path(__file__).resolve().parent / "fixtures" / "hero_repo" / relative_path
+        if not reference_path.exists():
+            raise FileNotFoundError(relative_path)
+        return build_pseudocode_comments(
+            file_path=relative_path,
+            current_code=current,
+            reference_code=reference_path.read_text(),
+            invariant=(topic.get("current_revision") or {}).get("invariant"),
+        )
 
     def _latest_attempt_output(self, check_id: str) -> str:
         with connect(self.db_path) as conn:

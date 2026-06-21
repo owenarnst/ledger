@@ -119,6 +119,8 @@ class CodexCoach(BaseCliCoach):
     def build_command(self) -> list[str]:
         return [
             self.binary,
+            "-a",
+            "never",
             "exec",
             "--sandbox",
             "read-only",
