@@ -344,11 +344,11 @@ export default function Workspace({
                         const selected = selectedVisible === index
                         const isCode = CODE_CHOICE.test(choice.trim())
                         return (
-                          <button
-                            key={choice}
-                            onClick={() => onAnswer(visibleQuestion.id, index)}
-                            disabled={allMcCorrect}
-                            style={{
+	                          <button
+	                            key={choice}
+	                            onClick={() => onAnswer(visibleQuestion.id, index)}
+	                            disabled={visibleResultIsCorrect}
+	                            style={{
                               display: 'block',
                               width: '100%',
                               textAlign: 'left',
@@ -358,10 +358,10 @@ export default function Workspace({
                               border: `1px solid ${selected ? 'var(--accent)' : 'var(--bd2)'}`,
                               background: selected ? 'rgba(200,116,77,0.14)' : 'rgba(255,255,255,0.025)',
                               color: 'var(--tx)',
-                              cursor: allMcCorrect ? 'default' : 'pointer',
-                              boxShadow: selected ? 'inset 3px 0 0 var(--accent)' : 'none',
-                              opacity: allMcCorrect && !selected ? 0.72 : 1,
-                            }}
+	                              cursor: visibleResultIsCorrect ? 'default' : 'pointer',
+	                              boxShadow: selected ? 'inset 3px 0 0 var(--accent)' : 'none',
+	                              opacity: visibleResultIsCorrect && !selected ? 0.72 : 1,
+	                            }}
                           >
                             <span style={{ display: 'flex', alignItems: 'flex-start', gap: 9 }}>
                               <span style={{ flex: 'none', width: 18, height: 18, borderRadius: '50%', border: `1px solid ${selected ? 'var(--accent)' : 'var(--bd2)'}`, background: selected ? 'var(--accent)' : 'transparent', marginTop: isCode ? 1 : 0 }} />
