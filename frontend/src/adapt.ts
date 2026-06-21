@@ -76,7 +76,6 @@ export function toCards(topics: Topic[]): Card[] {
 // authored the trace. Falls back to a title-cased form, never to a fake "Claude".
 const TRACE_PROVIDER: Record<string, string> = {
   claude_code: 'Claude Code',
-  codex: 'Codex',
 }
 
 export function providerLabel(provider?: string | null): string {

@@ -27,7 +27,7 @@ A single pass at a Check. Struggle (elapsed, runs, coach use) is the signal — 
 Immutable records (code / conversation / docs / commit / test) that ground a Topic. Conversation evidence carries a **Provider** tag.
 
 **Provider**:
-The coding-agent harness that authored a trace — currently **Claude Code** or **Codex**. A provenance fact and a ranking signal, never a validation input.
+The coding-agent harness that authored a trace — currently **Claude Code** (the provider-blind `ProviderAdapter` abstraction remains, but **Codex was dropped** — see ADR-0004). A provenance fact and a ranking signal, never a validation input.
 
 **Provider adapter**:
 The ingestion component that normalizes one Provider's local session logs into Ledger Evidence records. The application layer is provider-blind; only adapters are provider-specific.
@@ -48,7 +48,7 @@ The explicit lifecycle exit that removes a **Topic** from the active **Worklist*
 _Avoid_: delete, archive (Retire never destroys revisions, Checks, or reflections).
 
 **Coach**:
-The restricted assistant that explains concepts/goals and asks diagnostic questions but never returns a patch. Runs Claude-only (`claude -p`, all tools denied); see ADR-0001.
+The restricted assistant that explains concepts/goals and asks diagnostic questions but never returns a patch. Runs Claude-only (`claude -p`, all tools denied); the maintainer picks which Claude model answers (**Haiku / Sonnet / Opus**, default Sonnet) — a cost/quality dial, never a provider switch and never a relaxation of withholding. See ADR-0001 and ADR-0004.
 
 **Blast radius**:
 How much breaks if a decision is wrong — centrality (callers/fan-out) + risk-class (auth, persistence, migrations, irreversible). The static "does it matter" axis.
@@ -85,5 +85,5 @@ _Avoid_: anchoring on a tuned magic number (a threshold's "why" is "I tried valu
 
 - **"load-bearing"** was used to mean high-fan-in *symbol*; resolved — it means a defendable *decision* (an early build that ranked by raw fan-in surfaced trivia).
 - **"engagement"** (transcript-engagement classification) is a dead signal that failed validation; it is never an input to Ownership thinness or to any Provider judgement. Use **AI-authorship** (a binary provenance fact) instead.
-- **"support both providers"** (this event) means **ingestion** parity + provider-labeled provenance; the **Topic Analyst**, **Coach**, and live session nudge run on **Claude Code only**. See ADR-0001 and ADR-0002.
+- **"support both providers"** meant **ingestion** parity + provider-labeled provenance, with the **Topic Analyst**, **Coach**, and live session nudge on **Claude Code only** (ADR-0001, ADR-0002). **Superseded by ADR-0004 (2026-06-21):** Codex was dropped entirely — ingestion, Coach, and exercise generation are now Claude-only — so "both providers" no longer holds. The `ProviderAdapter` abstraction stays (Claude Code + git).
 - **"Topic identity"** was keyed in code on `file:symbol`, but a **Topic** is defined to *survive renames and rewrites*; resolved — identity is anchored to the verified primary **Decision anchor** (rename- and edit-robust, distinct from the per-edit excerpt fingerprint that drives revisions), the analyst proposes `create`/`update`/**Retire** against stable IDs, and deterministic code owns the match. See the forthcoming reconciliation-lifecycle ADR.

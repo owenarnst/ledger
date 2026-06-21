@@ -85,7 +85,8 @@ def test_api_defaults_hook_provider_to_claude_code(tmp_path):
     assert body["topics"] == []
 
 
-def test_api_accepts_codex_provider_for_ingestion_only(tmp_path):
+def test_api_rejects_dropped_codex_provider(tmp_path):
+    # Codex was dropped as a supported provider (ADR-0004); ingestion now refuses it.
     repo_path = tmp_path / "docs-api"
     retrieval_dir = repo_path / "retrieval"
     retrieval_dir.mkdir(parents=True)
@@ -105,9 +106,7 @@ def test_api_accepts_codex_provider_for_ingestion_only(tmp_path):
         },
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["event"]["provider"] == "codex"
+    assert response.status_code == 400
 
 
 def test_api_extracts_a_real_repo_and_exposes_analysis(git_repo, tmp_path):

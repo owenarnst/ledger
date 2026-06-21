@@ -42,12 +42,6 @@ export const chipClaude: React.CSSProperties = {
   background: 'rgba(200,116,77,0.10)',
   border: '1px solid rgba(200,116,77,0.22)',
 }
-export const chipCodex: React.CSSProperties = {
-  ...monoChip,
-  color: '#a6bcdb',
-  background: 'rgba(133,160,196,0.10)',
-  border: '1px solid rgba(133,160,196,0.24)',
-}
 export const toolChip: React.CSSProperties = {
   whiteSpace: 'nowrap',
   color: '#cdcabf',
@@ -77,11 +71,10 @@ export function impactChip(level: string): React.CSSProperties {
   return { ...base, color: 'var(--faint)' }
 }
 
-export type ChipKind = 'claude' | 'codex' | 'risk' | 'plain'
+export type ChipKind = 'claude' | 'risk' | 'plain'
 
 export function chipForKind(k: ChipKind): React.CSSProperties {
   if (k === 'claude') return chipClaude
-  if (k === 'codex') return chipCodex
   if (k === 'risk') return chipRisk
   return chipPlain
 }

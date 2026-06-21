@@ -14,7 +14,7 @@ from .analyst import (
     TraceLocator,
     create_analyst,
 )
-from .coach import Coach, create_coach
+from .coach import DEFAULT_COACH_MODEL, Coach, create_coach
 from .db import connect, initialize_schema
 from .exercise_generation import CliExercisePlanGenerator, ExercisePlanGenerator, fallback_plan, normalize_difficulty
 from .exercise_templates import public_plan, validate_answers
@@ -45,7 +45,7 @@ _IMPACT_BY_RISK = {
     "retrieval": "medium",
     "general": "low",
 }
-_PROVIDER_LABEL = {"claude_code": "Claude", "codex": "Codex"}
+_PROVIDER_LABEL = {"claude_code": "Claude"}
 
 
 def _ownership_status(state: str) -> str:
@@ -737,11 +737,11 @@ class LedgerRepository:
                 )
             )
 
-    def ask_coach(self, check_id: str, question: str, provider: str | None = None) -> dict[str, str]:
+    def ask_coach(self, check_id: str, question: str, model: str | None = None) -> dict[str, str]:
         check = self.get_check(check_id)
         topic = self.get_topic(check["topic_id"])
         latest = self._latest_attempt_output(check_id)
-        coach = create_coach(provider) if provider else self.coach
+        coach = create_coach(model) if model else self.coach
         response = coach.ask(
             topic_title=topic["title"],
             task=topic["summary"],
@@ -754,7 +754,11 @@ class LedgerRepository:
                 (check_id, question, response),
             )
             conn.commit()
-        return {"question": question, "provider": provider or "default", "response": response}
+        return {
+            "question": question,
+            "model": getattr(coach, "model_id", DEFAULT_COACH_MODEL),
+            "response": response,
+        }
 
     def pseudocode_comments(self, check_id: str, relative_path: str) -> dict[str, Any]:
         check = self.get_check(check_id)

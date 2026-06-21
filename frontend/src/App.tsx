@@ -75,7 +75,6 @@ function Rail({ projectName, topicCount, readyCount, isDemo }: RailProps) {
       <div style={{ padding: '2px 14px 8px' }}>
         <div style={label()}>Log sources</div>
         {[
-          { name: 'Codex', path: '~/.codex/sessions' },
           { name: 'Claude Code', path: '~/.claude' },
         ].map((s) => (
           <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 10px' }}>
@@ -97,7 +96,7 @@ function Rail({ projectName, topicCount, readyCount, isDemo }: RailProps) {
           HOW LEDGER SEES THIS REPO
         </div>
         <div style={{ fontSize: 12, color: 'var(--mut)', lineHeight: 1.5 }}>
-          Ledger reads the Codex and Claude Code logs already on your machine to record what your agents touched.
+          Ledger reads the Claude Code logs already on your machine to record what your agents touched.
           Turning that activity into ranked decisions is curated today — automatic discovery is on the roadmap.
         </div>
       </div>
@@ -197,7 +196,7 @@ export default function App() {
 
   const [thread, setThread] = useState<ThreadMessage[]>([])
   const [coachInput, setCoachInput] = useState('')
-  const [coachProvider, setCoachProvider] = useState<'claude-code' | 'codex-exec'>('claude-code')
+  const [coachModel, setCoachModel] = useState<api.CoachModel>('sonnet')
   const [answers, setAnswers] = useState<Record<string, number>>({})
   const [answerResults, setAnswerResults] = useState<api.AnswerResult[]>([])
   const [histStats, setHistStats] = useState<HistStats | null>(null)
@@ -392,7 +391,7 @@ export default function App() {
       setElapsedMin(mins)
       const question = 'Use the latest test output, especially any printed values, to explain what the print output reveals about the bug. Be concise and do not provide code or a patch.'
       setThread((th) => [...th, { role: 'user', text: 'What does the print output show?' }, { role: 'thinking' }])
-      const res = await api.askCoach(check.id, question, coachProvider)
+      const res = await api.askCoach(check.id, question, coachModel)
       setThread((th) => {
         const copy = th.slice()
         const i = copy.findIndex((m) => m.role === 'thinking')
@@ -405,7 +404,7 @@ export default function App() {
     } finally {
       setPseudocodeRunning(false)
     }
-  }, [check, coachProvider, pseudocodeRunning, running])
+  }, [check, coachModel, pseudocodeRunning, running])
 
   const runChecks = useCallback(async () => {
     if (running || !check) return
@@ -472,7 +471,7 @@ export default function App() {
       setThread((th) => [...th, { role: 'user', text: t }, { role: 'thinking' }])
       setCoachInput('')
       try {
-        const res = await api.askCoach(check.id, t, coachProvider)
+        const res = await api.askCoach(check.id, t, coachModel)
         setThread((th) => {
           const copy = th.slice()
           const i = copy.findIndex((m) => m.role === 'thinking')
@@ -488,7 +487,7 @@ export default function App() {
         })
       }
     },
-    [check, coachProvider],
+    [check, coachModel],
   )
 
   const sendCoach = useCallback(() => pushCoach(coachInput), [pushCoach, coachInput])
@@ -622,8 +621,8 @@ export default function App() {
             askCoachAboutPrints={askCoachAboutPrints}
             thread={thread}
             coachInput={coachInput}
-            coachProvider={coachProvider}
-            onCoachProvider={setCoachProvider}
+            coachModel={coachModel}
+            onCoachModel={setCoachModel}
             onCoachInput={onCoachInput}
             onCoachKey={onCoachKey}
             sendCoach={sendCoach}

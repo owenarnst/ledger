@@ -103,8 +103,10 @@ def test_verify_accepts_supported_trace_and_rejects_unsupported():
 def test_verify_tolerates_trace_locator_with_line_suffix():
     index = _index()
     citation = _real_anchor_citation(index)
-    available = (TraceLocator(provider="codex", session_id="s2", source_path="y.jsonl"),)
-    cited = TraceCitation("codex", "y.jsonl:42", "touched", "exact")
+    # Provider is incidental here; a non-default value proves verification echoes
+    # whatever provider the trace carries rather than hardcoding one.
+    available = (TraceLocator(provider="other", session_id="s2", source_path="y.jsonl"),)
+    cited = TraceCitation("other", "y.jsonl:42", "touched", "exact")
 
     result = verify_proposals(
         [_proposal([citation], traces=[cited])],
@@ -114,4 +116,4 @@ def test_verify_tolerates_trace_locator_with_line_suffix():
     )
 
     assert len(result.verified[0].traces) == 1
-    assert result.verified[0].traces[0].provider == "codex"
+    assert result.verified[0].traces[0].provider == "other"

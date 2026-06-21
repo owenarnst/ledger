@@ -1,6 +1,12 @@
 # Dual-provider ingestion, Claude-native spine
 
-Status: accepted (2026-06-20)
+Status: superseded by ADR-0004 (2026-06-21)
+
+> **Superseded (2026-06-21):** Codex was dropped entirely — ingestion adapter,
+> coach, exercise-generation fallback, and all UI. The `ProviderAdapter`
+> abstraction this ADR introduced is kept (now Claude Code + git), but the
+> Codex track and the "support both providers" claim no longer hold. See
+> ADR-0004. The Context/Decision below are preserved as the original record.
 
 ## Context
 

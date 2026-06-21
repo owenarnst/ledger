@@ -15,6 +15,12 @@ Never include code blocks, diffs, file edits, replacement lines, or direct patch
 
 DISALLOWED_TOOLS = "Bash,Read,Edit,Write,WebFetch,Grep,Glob,NotebookEdit,mcp__*"
 
+# Coach is Claude-only (ADR-0004): the defining property is enforced withholding
+# via `--disallowedTools`. The only choice the user makes is which Claude model
+# answers — a cost/quality dial, never a provider switch.
+COACH_MODELS = ("haiku", "sonnet", "opus")
+DEFAULT_COACH_MODEL = "sonnet"
+
 
 class Coach(Protocol):
     def build_prompt(
@@ -89,12 +95,15 @@ class BaseCliCoach:
 @dataclass(frozen=True)
 class ClaudeCoach(BaseCliCoach):
     binary: str = "claude"
+    model_id: str = DEFAULT_COACH_MODEL
     timeout_seconds: int = 45
 
     def build_command(self) -> list[str]:
         return [
             self.binary,
             "-p",
+            "--model",
+            self.model_id,
             "--output-format",
             "json",
             "--append-system-prompt",
@@ -111,29 +120,8 @@ class ClaudeCoach(BaseCliCoach):
             return stdout
 
 
-@dataclass(frozen=True)
-class CodexCoach(BaseCliCoach):
-    binary: str = "codex"
-    timeout_seconds: int = 90
-
-    def build_command(self) -> list[str]:
-        return [
-            self.binary,
-            "-a",
-            "never",
-            "exec",
-            "--sandbox",
-            "read-only",
-            "--skip-git-repo-check",
-            "--ephemeral",
-            "-",
-        ]
-
-
-def create_coach(provider: str | None = None) -> Coach:
-    selected = (provider or os.environ.get("LEDGER_COACH_PROVIDER") or "claude").lower()
-    if selected in {"claude", "claude-code", "claude-print"}:
-        return ClaudeCoach()
-    if selected in {"codex", "codex-exec"}:
-        return CodexCoach()
-    raise ValueError(f"unsupported coach provider: {selected}")
+def create_coach(model: str | None = None) -> Coach:
+    selected = (model or os.environ.get("LEDGER_COACH_MODEL") or DEFAULT_COACH_MODEL).lower()
+    if selected not in COACH_MODELS:
+        raise ValueError(f"unsupported coach model: {selected!r} (choose one of {', '.join(COACH_MODELS)})")
+    return ClaudeCoach(model_id=selected)
