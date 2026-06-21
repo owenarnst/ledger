@@ -195,6 +195,14 @@ def test_easy_check_returns_multiple_choice_only_plan(tmp_path):
     assert "\n    return " in check["plan"]["questions"][1]["choices"][0]
 
 
+def test_easy_fallback_plan_is_multiple_choice_only():
+    plan = exercise_generation.fallback_plan("easy")
+
+    assert plan["difficulty"] == "easy"
+    assert all(step["type"] == "multiple_choice" for step in plan["steps"])
+    assert plan["questions"]
+
+
 def test_medium_check_uses_generated_implementation_hint_then_sandbox_plan(tmp_path):
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes", exercise_generator=FakeExerciseGenerator())
     repo.initialize()

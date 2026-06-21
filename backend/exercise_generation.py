@@ -58,6 +58,41 @@ def normalize_difficulty(difficulty: str | None) -> str:
 
 
 def fallback_plan(difficulty: str) -> dict[str, Any]:
+    if difficulty == "easy":
+        return {
+            "template_id": "generated-easy-fallback",
+            "difficulty": "easy",
+            "steps": [
+                {"type": "multiple_choice", "question_id": "tenant-filter-purpose"},
+                {"type": "multiple_choice", "question_id": "tenant-filter-debug"},
+            ],
+            "questions": [
+                {
+                    "id": "tenant-filter-purpose",
+                    "kind": "concept",
+                    "prompt": "What should this function guarantee before returning documents?",
+                    "choices": [
+                        "Only requested-tenant documents are returned",
+                        "All documents are returned unchanged",
+                        "Documents are sorted by score",
+                    ],
+                    "correct_index": 0,
+                    "rationale": "The invariant is tenant isolation.",
+                },
+                {
+                    "id": "tenant-filter-debug",
+                    "kind": "debugging",
+                    "prompt": "Which complete implementation fixes the behavior?",
+                    "choices": [
+                        "def visible_documents_for_tenant(documents: list[Document], tenant_id: str) -> list[Document]:\n    return [doc for doc in documents if doc.tenant_id == tenant_id]",
+                        "def visible_documents_for_tenant(documents: list[Document], tenant_id: str) -> list[Document]:\n    return list(documents)",
+                        "def visible_documents_for_tenant(documents: list[Document], tenant_id: str) -> list[Document]:\n    return sorted(documents, key=lambda doc: doc.score, reverse=True)",
+                    ],
+                    "correct_index": 0,
+                    "rationale": "The fix filters documents to the requested tenant instead of exposing every tenant.",
+                },
+            ],
+        }
     plan = dict(DEFAULT_PLAN)
     plan["difficulty"] = difficulty
     plan["template_id"] = f"generated-{difficulty}-fallback"
