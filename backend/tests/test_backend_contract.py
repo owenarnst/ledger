@@ -3,7 +3,7 @@ import json
 from backend import exercise_generation
 from backend.__main__ import main
 from backend.api import create_app
-from backend.hooks import HookSpool, build_session_start_nudge, install_hooks, reset_ledger, session_end
+from backend.hooks import HookSpool, build_session_start_nudge, reset_ledger
 from backend.ingestion import ClaudeCodeAdapter, CodexAdapter
 from backend.repository import LedgerRepository
 
@@ -439,46 +439,6 @@ def test_session_start_nudge_reports_ready_checks(tmp_path):
     )
 
 
-def test_session_end_hook_gives_claude_conditional_ledger_guidance(tmp_path):
-    repo_path = tmp_path / "docs-search-api"
-    repo_path.mkdir()
-    spool = HookSpool(tmp_path / "spool")
-    spool.write(
-        {
-            "provider": "git",
-            "event_type": "post-commit",
-            "cwd": str(repo_path),
-            "branch": "main",
-            "head_sha": "abc123",
-            "changed_files": ["backend/search.py"],
-        }
-    )
-    repo = LedgerRepository(tmp_path / "ledger.db")
-    repo.initialize()
-
-    result = session_end(repo, cwd=repo_path, base_url="http://127.0.0.1:4317", spool_dir=tmp_path / "spool")
-
-    assert result["drained"] == 1
-    assert result["ready"] == 3
-    output = result["envelope"]["hookSpecificOutput"]
-    assert output["hookEventName"] == "SessionEnd"
-    assert "Only mention Ledger if you believe this session ended with complex" in output["additionalContext"]
-    assert "Open http://127.0.0.1:4317/p/docs-search-api" in output["additionalContext"]
-
-
-def test_install_hooks_registers_session_start_and_end(tmp_path):
-    repo_path = tmp_path / "docs-search-api"
-    repo_path.mkdir()
-    (repo_path / ".git").mkdir()
-
-    result = install_hooks(repo_path, interpreter="/usr/bin/python3", base_url="http://ledger.local")
-    settings = json.loads((repo_path / ".claude" / "settings.json").read_text())
-
-    assert "session-start" in json.dumps(settings["hooks"]["SessionStart"])
-    assert "session-end" in json.dumps(settings["hooks"]["SessionEnd"])
-    assert result["settings"].endswith(".claude/settings.json")
-
-
 def test_reset_ledger_recreates_database_and_clears_spool(tmp_path):
     db_path = tmp_path / "ledger.db"
     spool = HookSpool(tmp_path / "spool")
@@ -506,28 +466,3 @@ def test_cli_reset_and_nudge_commands(tmp_path, capsys):
     output = capsys.readouterr().out
     assert "Reset Ledger at" in output
     assert "Ledger: 3 checks ready for docs-search-api" in output
-
-
-def test_cli_session_end_outputs_claude_hook_envelope(tmp_path, capsys):
-    db_path = tmp_path / "ledger.db"
-    sandbox_root = tmp_path / "sandboxes"
-    repo_path = tmp_path / "docs-search-api"
-    repo_path.mkdir()
-
-    assert main(
-        [
-            "session-end",
-            "--db",
-            str(db_path),
-            "--sandbox-root",
-            str(sandbox_root),
-            "--cwd",
-            str(repo_path),
-            "--base-url",
-            "http://ledger.local",
-        ]
-    ) == 0
-
-    output = json.loads(capsys.readouterr().out)
-    assert output["hookSpecificOutput"]["hookEventName"] == "SessionEnd"
-    assert "Only mention Ledger if" in output["hookSpecificOutput"]["additionalContext"]

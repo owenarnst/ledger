@@ -126,33 +126,6 @@ def session_start(
     return {"line": line, "ready": ready, "drained": drained["imported"], "reconciled": reconciled, "envelope": envelope}
 
 
-def session_end(
-    repo: LedgerRepository,
-    *,
-    cwd: str | Path,
-    base_url: str = DEFAULT_BASE_URL,
-    spool_dir: str | Path = DEFAULT_SPOOL_DIR,
-) -> dict[str, Any]:
-    """Called by the Claude SessionEnd hook. Imports queued commits and gives
-    Claude conditional guidance; Claude decides whether the session warrants a reminder."""
-    drained = drain_spool(repo, spool_dir=spool_dir)
-    line, ready = _nudge_details(repo, cwd=cwd, base_url=base_url)
-    envelope = {
-        "hookSpecificOutput": {
-            "hookEventName": "SessionEnd",
-            "additionalContext": (
-                f"[Ledger] {drained['imported']} recent commit event(s) were captured. "
-                "Only mention Ledger if you believe this session ended with complex, load-bearing, "
-                "or Claude-assisted work the user should verify they understand. "
-                "If the work was trivial, do not mention Ledger. "
-                f"If it is worth surfacing, say: {line}"
-            ),
-            "sessionTitle": f"Ledger: {ready} checks ready",
-        }
-    }
-    return {"line": line, "ready": ready, "drained": drained["imported"], "envelope": envelope}
-
-
 def install_hooks(
     repo_path: str | Path,
     *,
@@ -187,15 +160,11 @@ def install_hooks(
         except json.JSONDecodeError:
             settings = {}
     hooks = settings.setdefault("hooks", {})
-    start_command = f'"{interpreter}" -m backend session-start --cwd "$CLAUDE_PROJECT_DIR"'
-    start_entry = {"matcher": "startup", "hooks": [{"type": "command", "command": start_command}]}
-    end_command = f'"{interpreter}" -m backend session-end --cwd "$CLAUDE_PROJECT_DIR"'
-    end_entry = {"matcher": "stop", "hooks": [{"type": "command", "command": end_command}]}
-    # Idempotent: drop any prior Ledger entries before re-adding.
-    kept_start = [e for e in hooks.get("SessionStart", []) if "backend session-start" not in json.dumps(e)]
-    kept_end = [e for e in hooks.get("SessionEnd", []) if "backend session-end" not in json.dumps(e)]
-    hooks["SessionStart"] = kept_start + [start_entry]
-    hooks["SessionEnd"] = kept_end + [end_entry]
+    command = f'"{interpreter}" -m backend session-start --cwd "$CLAUDE_PROJECT_DIR"'
+    entry = {"matcher": "startup", "hooks": [{"type": "command", "command": command}]}
+    # Idempotent: drop any prior Ledger SessionStart entry before re-adding.
+    kept = [e for e in hooks.get("SessionStart", []) if "backend session-start" not in json.dumps(e)]
+    hooks["SessionStart"] = kept + [entry]
     settings_path.write_text(json.dumps(settings, indent=2) + "\n")
 
     return {
