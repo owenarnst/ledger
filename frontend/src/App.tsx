@@ -344,32 +344,11 @@ export default function App() {
     if (!active?.editable) return
     setPseudocodeRunning(true)
     try {
-      const hasHints = codeRef.current.includes('Plan:')
-      if (hasHints) {
-        await api.writeFile(check.id, check.target_file, codeRef.current)
-        const run = await api.runCheck(check.id)
-        const mins = Math.max(1, Math.round((Date.now() - startTsRef.current) / 60000))
-        setRunOutput(run.output || '')
-        setPhase(run.passed ? 'pass' : 'fail')
-        setRuns((n) => n + 1)
-        setElapsedMin(mins)
-        const question = 'Use the latest test output, especially any printed values, to explain what the print output reveals about the bug. Be concise and do not provide code or a patch.'
-        setThread((th) => [...th, { role: 'user', text: 'What does the print output show?' }, { role: 'thinking' }])
-        const res = await api.askCoach(check.id, question, coachProvider)
-        setThread((th) => {
-          const copy = th.slice()
-          const i = copy.findIndex((m) => m.role === 'thinking')
-          if (i >= 0) copy[i] = { role: 'coach', text: res.response || '' }
-          return copy
-        })
-        return
-      } else {
-        const result = await api.generatePseudocodeComments(check.id, activeFile)
-        if (result.changed) {
-          await typeInsertedCommentLines(result.content)
-          setFiles((items) => items.map((item) => (item.path === activeFile ? { ...item, modified: true } : item)))
-          setPhase((p) => (p === 'pass' || p === 'fail' ? 'idle' : p))
-        }
+      const result = await api.generatePseudocodeComments(check.id, activeFile)
+      if (result.changed) {
+        await typeInsertedCommentLines(result.content)
+        setFiles((items) => items.map((item) => (item.path === activeFile ? { ...item, modified: true } : item)))
+        setPhase((p) => (p === 'pass' || p === 'fail' ? 'idle' : p))
       }
     } catch (e) {
       setRunOutput(`Could not add hints: ${e instanceof Error ? e.message : String(e)}`)
@@ -377,7 +356,35 @@ export default function App() {
     } finally {
       setPseudocodeRunning(false)
     }
-  }, [activeFile, check, coachProvider, files, pseudocodeRunning, running, typeInsertedCommentLines])
+  }, [activeFile, check, files, pseudocodeRunning, running, typeInsertedCommentLines])
+
+  const askCoachAboutPrints = useCallback(async () => {
+    if (!check || running || pseudocodeRunning) return
+    setPseudocodeRunning(true)
+    try {
+      await api.writeFile(check.id, check.target_file, codeRef.current)
+      const run = await api.runCheck(check.id)
+      const mins = Math.max(1, Math.round((Date.now() - startTsRef.current) / 60000))
+      setRunOutput(run.output || '')
+      setPhase(run.passed ? 'pass' : 'fail')
+      setRuns((n) => n + 1)
+      setElapsedMin(mins)
+      const question = 'Use the latest test output, especially any printed values, to explain what the print output reveals about the bug. Be concise and do not provide code or a patch.'
+      setThread((th) => [...th, { role: 'user', text: 'What does the print output show?' }, { role: 'thinking' }])
+      const res = await api.askCoach(check.id, question, coachProvider)
+      setThread((th) => {
+        const copy = th.slice()
+        const i = copy.findIndex((m) => m.role === 'thinking')
+        if (i >= 0) copy[i] = { role: 'coach', text: res.response || '' }
+        return copy
+      })
+    } catch (e) {
+      setRunOutput(`Could not ask coach about prints: ${e instanceof Error ? e.message : String(e)}`)
+      setPhase('error')
+    } finally {
+      setPseudocodeRunning(false)
+    }
+  }, [check, coachProvider, pseudocodeRunning, running])
 
   const runChecks = useCallback(async () => {
     if (running || !check) return
@@ -587,10 +594,11 @@ export default function App() {
             phase={phase}
             running={running}
             pseudocodeRunning={pseudocodeRunning}
-            pseudocodeMode={code.includes('Plan:') ? 'prints' : 'hints'}
+            canAskCoachAboutPrints={code.includes('Plan:')}
             runOutput={runOutput}
             runChecks={runChecks}
             addPseudocodeComments={addPseudocodeComments}
+            askCoachAboutPrints={askCoachAboutPrints}
             thread={thread}
             coachInput={coachInput}
             coachProvider={coachProvider}

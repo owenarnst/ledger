@@ -37,10 +37,11 @@ interface WorkspaceProps {
   phase: Phase
   running: boolean
   pseudocodeRunning: boolean
-  pseudocodeMode: 'hints' | 'prints'
+  canAskCoachAboutPrints: boolean
   runOutput: string
   runChecks: () => void
   addPseudocodeComments: () => void
+  askCoachAboutPrints: () => void
   thread: any[]
   coachInput: string
   coachProvider: 'claude-code' | 'codex-exec'
@@ -107,10 +108,11 @@ export default function Workspace({
   phase,
   running,
   pseudocodeRunning,
-  pseudocodeMode,
+  canAskCoachAboutPrints,
   runOutput,
   runChecks,
   addPseudocodeComments,
+  askCoachAboutPrints,
   thread,
   coachInput,
   coachProvider,
@@ -290,7 +292,7 @@ export default function Workspace({
                         cursor: pseudocodeRunning ? 'default' : 'pointer',
                       }}
                     >
-                      {pseudocodeRunning ? (pseudocodeMode === 'prints' ? 'asking coach…' : 'typing hints…') : pseudocodeMode === 'prints' ? 'Ask coach about prints' : 'Add pseudocode hints'}
+	                      {pseudocodeRunning ? 'typing hints…' : 'Add pseudocode hints'}
                     </button>
                   )}
                   {!editable && activeFile && (
@@ -584,8 +586,17 @@ export default function Workspace({
                 <option value="codex-exec">Codex</option>
               </select>
             </div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
-              {COACH_CHIPS.map((ch, i) => (
+	            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+	              {canAskCoachAboutPrints && (
+	                <div
+	                  className="lg-hover-chip"
+	                  onClick={pseudocodeRunning ? undefined : askCoachAboutPrints}
+	                  style={{ fontSize: 11.5, color: pseudocodeRunning ? 'var(--faint)' : 'var(--accent)', border: '1px solid rgba(200,116,77,0.28)', background: pseudocodeRunning ? 'rgba(255,255,255,0.03)' : 'rgba(200,116,77,0.08)', padding: '5px 10px', borderRadius: 14, cursor: pseudocodeRunning ? 'default' : 'pointer' }}
+	                >
+	                  {pseudocodeRunning ? 'Asking about prints…' : 'Ask coach about prints'}
+	                </div>
+	              )}
+	              {COACH_CHIPS.map((ch, i) => (
                 <div
                   key={i}
                   className="lg-hover-chip"
