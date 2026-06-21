@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .analyst import AnalystIndex, CodeAnchorCitation, TopicProposal, TraceCitation, TraceLocator
+from .ingestion import TraceSegment
 
 
 def fingerprint(excerpt: str) -> str:
@@ -51,6 +52,9 @@ class VerifiedTrace:
     source_path: str | None
     relevance: str
     link_confidence: str
+    # The cited segments that actually exist in the session, in chronological
+    # order — the Agent trace's verified prompt + tool-call hunk.
+    segments: tuple[TraceSegment, ...] = ()
 
     @property
     def source_locator(self) -> str | None:
@@ -178,12 +182,18 @@ def _verify_trace(lookup: dict[str, TraceLocator], citation: TraceCitation) -> V
         located = lookup.get(citation.locator.rsplit(":", 1)[0])
     if located is None:
         return None
+    # Resolve cited segment ids against the session; an id the session does not
+    # contain is dropped (the analyst can only cite what the transcript holds).
+    # Chronological session order is preserved for readability.
+    cited = set(citation.segment_ids)
+    segments = tuple(s for s in located.segments if s.id in cited)
     return VerifiedTrace(
         provider=located.provider,
         session_id=located.session_id,
         source_path=located.source_path,
         relevance=citation.relevance,
         link_confidence=citation.link_confidence,
+        segments=segments,
     )
 
 

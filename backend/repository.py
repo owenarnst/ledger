@@ -19,7 +19,7 @@ from .db import connect, initialize_schema
 from .exercise_generation import CliExercisePlanGenerator, ExercisePlanGenerator, fallback_plan, normalize_difficulty
 from .exercise_templates import public_plan, validate_answers
 from .extraction import resolve_head_sha
-from .ingestion import DEFAULT_PROVIDER, IngestionEvent, adapter_for
+from .ingestion import DEFAULT_PROVIDER, IngestionEvent, TraceSegment, adapter_for, claude_transcripts_dir
 from .pseudocode import build_pseudocode_comments
 from .sandbox import create_sandbox, run_pytest, sandbox_spec_for
 from .verifier import VerificationResult, VerifiedTopic, verify_proposals
@@ -233,6 +233,24 @@ class LedgerRepository:
             topics = result["topics"]
         return {"provider": provider, "imported": len(imported), "events": imported, "topics": topics}
 
+    def _import_claude_transcripts(
+        self, repo_root: Path, *, progress: Callable[[str], None] | None = None
+    ) -> int:
+        """Ingest the repo's real Claude Code transcripts as analyst recall material.
+
+        Reads ``~/.claude/projects/<repo>/*.jsonl`` (the live sessions, not a fixture)
+        into the sessions table so :meth:`_trace_locators` can offer their prompt +
+        tool-call segments to the analyst. Returns the number of sessions imported; a
+        no-op (0) when the repo has no transcripts on this machine.
+        """
+        transcripts = claude_transcripts_dir(repo_root)
+        if not transcripts.exists():
+            return 0
+        imported = self.import_provider_sessions(DEFAULT_PROVIDER, transcripts)["imported"]
+        if progress and imported:
+            progress(f"Ingested {imported} real Claude Code session(s) from {transcripts}")
+        return imported
+
     # ------------------------------------------------------------------ #
     # Topic discovery — agentic worklist (ADR-0002)
     # ------------------------------------------------------------------ #
@@ -257,6 +275,11 @@ class LedgerRepository:
         repo_root = Path(project["repo_path"])
         analyst = analyst or create_analyst()
         head_sha = resolve_head_sha(repo_root)
+
+        # The Agent trace's recall material is the repo's real Claude Code sessions:
+        # ingest ~/.claude transcripts so the analyst can cite the prompts + tool calls
+        # that actually built this code. No-op when none exist (e.g. CI, a fresh clone).
+        self._import_claude_transcripts(repo_root, progress=progress)
 
         index = AnalystIndex.from_repo(repo_root, traces=self._trace_locators(project))
         discovery = analyst.discover(repo_root, index, progress=progress)
@@ -319,16 +342,30 @@ class LedgerRepository:
         )
 
     def _trace_locators(self, project: dict[str, Any]) -> tuple[TraceLocator, ...]:
-        """Development traces the analyst is allowed to cite (recall material)."""
+        """Development traces the analyst is allowed to cite (recall material).
+
+        Each locator carries the session's addressable prompt/tool-call segments so
+        the analyst can cite specific ones and the verifier can resolve them.
+        """
         with connect(self.db_path) as conn:
             rows = conn.execute(
-                "SELECT id, provider, source_path FROM sessions WHERE project_id = ? ORDER BY id",
+                "SELECT id, provider, source_path, segments_json FROM sessions "
+                "WHERE project_id = ? ORDER BY id",
                 (project["id"],),
             ).fetchall()
-        return tuple(
-            TraceLocator(provider=r["provider"], session_id=r["id"], source_path=r["source_path"])
-            for r in rows
-        )
+        locators: list[TraceLocator] = []
+        for r in rows:
+            raw = json.loads(r["segments_json"] or "[]")
+            segments = tuple(TraceSegment.from_dict(s) for s in raw if isinstance(s, dict))
+            locators.append(
+                TraceLocator(
+                    provider=r["provider"],
+                    session_id=r["id"],
+                    source_path=r["source_path"],
+                    segments=segments,
+                )
+            )
+        return tuple(locators)
 
     def _persist_verified_topic(
         self, conn: Any, project: dict[str, Any], verified: VerifiedTopic, rank: int,
@@ -423,15 +460,23 @@ class LedgerRepository:
                 (revision_id, code_eid),
             )
         for trace in verified.traces:
+            tool_sequence = [
+                f"{s.tool} {s.target}".strip()
+                for s in trace.segments
+                if s.kind == "tool_call"
+            ]
+            segments_json = json.dumps([s.as_dict() for s in trace.segments])
+            body = self._render_trace_body(trace.segments, trace.relevance)
             trace_eid = conn.execute(
                 """
                 INSERT INTO evidence
-                (topic_id, provider, session_id, source_path, tool_sequence_json,
+                (topic_id, provider, session_id, source_path, tool_sequence_json, segments_json,
                  link_confidence, kind, title, body, excerpt_sha, relevance)
-                VALUES (?, ?, ?, ?, '[]', ?, 'trace', ?, ?, NULL, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'trace', ?, ?, NULL, ?)
                 """,
                 (topic_id, trace.provider, trace.session_id, trace.source_path,
-                 trace.link_confidence, f"{trace.provider} session", trace.relevance, trace.relevance),
+                 json.dumps(tool_sequence), segments_json,
+                 trace.link_confidence, f"{trace.provider} session", body, trace.relevance),
             ).lastrowid
             conn.execute(
                 """
@@ -508,7 +553,7 @@ class LedgerRepository:
             evidence = self._evidence_rows(
                 conn.execute(
                     """
-                    SELECT provider, session_id, source_path, tool_sequence_json,
+                    SELECT provider, session_id, source_path, tool_sequence_json, segments_json,
                            link_confidence, kind, title, body, excerpt_sha, relevance
                     FROM evidence
                     WHERE topic_id = ?
@@ -882,6 +927,8 @@ class LedgerRepository:
             payload = dict(row)
             raw_sequence = payload.pop("tool_sequence_json", None)
             payload["tool_sequence"] = json.loads(raw_sequence) if raw_sequence else []
+            raw_segments = payload.pop("segments_json", None)
+            payload["segments"] = json.loads(raw_segments) if raw_segments else []
             rows.append(payload)
         return rows
 
@@ -910,6 +957,18 @@ class LedgerRepository:
         return f"{provider}_receipt"
 
     @staticmethod
+    def _render_trace_body(segments: Any, fallback: str) -> str:
+        """A plain-text rendering of the agent-trace hunk for the body column and
+        any non-segment-aware consumer; the UI renders the structured segments."""
+        lines: list[str] = []
+        for s in segments:
+            if s.kind == "prompt":
+                lines.append(f'"{s.text}"')
+            else:
+                lines.append(f"{s.tool} {s.target}".strip())
+        return "\n".join(lines) or fallback
+
+    @staticmethod
     def _tool_sequence_json(payload: dict[str, Any]) -> str:
         sequence = payload.get("tool_sequence") or []
         if not isinstance(sequence, list):
@@ -921,15 +980,28 @@ class LedgerRepository:
         session_id = event.payload.get("session_id")
         if not session_id:
             return
+        segments_json = json.dumps(event.payload.get("segments") or [])
+        # Preserve a previously-ingested segment list when a later bare hook event
+        # for the same session carries none (an empty '[]' never clobbers a hunk).
         conn.execute(
             """
-            INSERT INTO sessions (id, project_id, provider, source_path, started_at)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            INSERT INTO sessions (id, project_id, provider, source_path, segments_json, started_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(id) DO UPDATE SET
                 provider = excluded.provider,
-                source_path = excluded.source_path
+                source_path = excluded.source_path,
+                segments_json = CASE
+                    WHEN excluded.segments_json = '[]' THEN sessions.segments_json
+                    ELSE excluded.segments_json
+                END
             """,
-            (str(session_id), project_id, event.provider, event.payload.get("source_path")),
+            (
+                str(session_id),
+                project_id,
+                event.provider,
+                event.payload.get("source_path"),
+                segments_json,
+            ),
         )
 
     def _seed(self, conn: Any) -> None:
@@ -957,13 +1029,6 @@ class LedgerRepository:
         conn.execute(
             "INSERT INTO commits (sha, project_id) VALUES (?, 'project-docs-search-api')",
             (seed["commit_sha"],),
-        )
-        conn.execute(
-            """
-            INSERT INTO sessions (id, project_id, provider, source_path)
-            VALUES (?, 'project-docs-search-api', 'claude_code', ?)
-            """,
-            (seed["session"]["id"], seed["session"]["source_path"]),
         )
         for topic in seed["topics"]:
             conn.execute(
@@ -998,13 +1063,14 @@ class LedgerRepository:
                 evidence_id = conn.execute(
                     """
                     INSERT INTO evidence
-                    (topic_id, provider, session_id, source_path, tool_sequence_json,
+                    (topic_id, provider, session_id, source_path, tool_sequence_json, segments_json,
                      link_confidence, kind, title, body, excerpt_sha, relevance)
-                    VALUES (?, 'claude_code', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, 'claude_code', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         topic["id"], ev["session_id"], ev["source_path"],
-                        json.dumps(ev.get("tool_sequence") or []), ev["link_confidence"],
+                        json.dumps(ev.get("tool_sequence") or []),
+                        json.dumps(ev.get("segments") or []), ev["link_confidence"],
                         ev["kind"], ev["title"], ev["body"], ev["excerpt_sha"], ev["relevance"],
                     ),
                 ).lastrowid
@@ -1051,51 +1117,6 @@ class LedgerRepository:
         ).fetchone()
         if not topic:
             return
-
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO sessions (id, project_id, provider, source_path)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                "claude-demo-session",
-                "project-docs-search-api",
-                "claude_code",
-                "~/.claude/projects/demo.jsonl",
-            ),
-        )
-        receipt = conn.execute(
-            """
-            SELECT id FROM evidence
-            WHERE topic_id = ? AND kind = 'claude_receipt'
-            """,
-            ("tenant-cache-isolation",),
-        ).fetchone()
-        if receipt:
-            conn.execute(
-                """
-                UPDATE evidence
-                SET
-                    provider = 'claude_code',
-                    session_id = ?,
-                    source_path = ?,
-                    tool_sequence_json = ?,
-                    link_confidence = 'hand_verified'
-                WHERE id = ?
-                """,
-                (
-                    "claude-demo-session",
-                    "~/.claude/projects/demo.jsonl",
-                    json.dumps(
-                        [
-                            "Read retrieval/rerank.py",
-                            "Edit retrieval/rerank.py",
-                            "Bash python -m pytest",
-                        ]
-                    ),
-                    receipt["id"],
-                ),
-            )
 
         revision = conn.execute(
             "SELECT id FROM topic_revisions WHERE id = ?",

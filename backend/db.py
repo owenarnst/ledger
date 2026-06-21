@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     project_id TEXT NOT NULL REFERENCES projects(id),
     provider TEXT NOT NULL,
     source_path TEXT,
+    segments_json TEXT NOT NULL DEFAULT '[]',
     started_at TEXT,
     ended_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -70,6 +71,7 @@ CREATE TABLE IF NOT EXISTS evidence (
     session_id TEXT REFERENCES sessions(id),
     source_path TEXT,
     tool_sequence_json TEXT NOT NULL DEFAULT '[]',
+    segments_json TEXT NOT NULL DEFAULT '[]',
     link_confidence TEXT NOT NULL DEFAULT 'heuristic',
     kind TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -221,6 +223,11 @@ MIGRATIONS = [
     "ALTER TABLE topics ADD COLUMN impact_level TEXT",
     "ALTER TABLE topics ADD COLUMN impact_consequence TEXT",
     "ALTER TABLE topics ADD COLUMN priority_rationale TEXT",
+    # Agent trace (Receipt L2): the analyst-selected prompt + tool-call hunk. The
+    # session holds the full addressable segment list; the evidence row holds the
+    # verified subset the analyst cited for one Topic.
+    "ALTER TABLE sessions ADD COLUMN segments_json TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE evidence ADD COLUMN segments_json TEXT NOT NULL DEFAULT '[]'",
     """
     CREATE TABLE IF NOT EXISTS analysis_runs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -99,9 +99,9 @@ Explain the consequence of violating the obligation and why the impact level is 
 Use a provider-neutral, progressively disclosed Evidence section rather than fixed provider panes. Group supporting records into:
 
 - **Code anchors** — count plus repository-relative path, symbol/location, and a short relevance statement.
-- **Development traces** — count plus Provider, session identity/time, and a short explanation of how the trace relates to the Topic.
+- **Agent trace** — count plus Provider, session identity/time, and a short explanation of how the trace relates to the Topic.
 
-Each Evidence row is collapsed by default. Activating it reveals the exact excerpt, durable source locator, and link confidence. Full raw traces and analyst internals are not shown by default.
+Each Evidence row is collapsed by default. Activating it reveals the exact excerpt, durable source locator, and link confidence. For an Agent trace, the expanded row shows the specific prompts and tool calls the analyst cited from the transcript — the Receipt's prompt + tool-call hunk — never raw file contents, tool results, or command output. Full raw traces and analyst internals are not shown by default.
 
 Do **not** include a reasoning-trail or missing-reasoning section in the expanded view.
 
@@ -123,8 +123,9 @@ Preserve the semantic order on every viewport: header → what you need to own �
 - The header displays Topic title, ownership status, impact level, and the appropriate Check action.
 - **What you need to own** displays the maintenance obligation or invariant.
 - **Why it matters** explains the failure consequence and categorical impact without a numeric score.
-- **Supporting Evidence** contains separate Code anchors and Development traces groups with counts.
+- **Supporting Evidence** contains separate Code anchors and Agent trace groups with counts.
 - Evidence rows show source/location and relevance while collapsed, then reveal the exact excerpt, source locator, and link confidence when activated.
+- An expanded Agent trace shows the analyst-cited prompts and tool calls (prompt + tool-call hunk); it never shows raw file contents, tool results, or command output.
 - Evidence presentation is Provider-neutral; traces carry their actual Provider label.
 - No reasoning-trail or missing-reasoning section is rendered.
 - Ownership history displays prior practice facts and whether code changed afterward, with a concise first-practice empty state.

@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Callable, Protocol, TextIO
 
 from .extraction import Candidate, blast_score, extract_candidates
+from .ingestion import TraceSegment
 
 
 # --------------------------------------------------------------------------- #
@@ -68,6 +69,10 @@ class TraceCitation:
     locator: str              # session source_path ("x.jsonl:42") or session id
     relevance: str
     link_confidence: str      # "exact" | "heuristic" | "hand_verified"
+    # The specific prompt/tool-call segment ids the analyst judged relevant (the
+    # Receipt L2 "prompt + tool-call hunk"). Verified against the session before
+    # they are persisted; unsupported ids are dropped.
+    segment_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -101,12 +106,17 @@ class DiscoveryResult:
 
 @dataclass(frozen=True)
 class TraceLocator:
-    """An available development trace the analyst may cite (recall material)."""
+    """An available development trace the analyst may cite (recall material).
+
+    Carries the session's addressable prompt/tool-call segments so the analyst can
+    cite the specific ones relevant to a Topic, and the verifier can resolve them.
+    """
 
     provider: str
     session_id: str
     source_path: str | None
     summary: str = ""
+    segments: tuple[TraceSegment, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -139,10 +149,18 @@ class AnalystIndex:
             )
         if self.traces:
             lines.append("")
-            lines.append("Available development traces (cite only by these locators):")
+            lines.append(
+                "Available development traces (cite the locator + the relevant segment_ids):"
+            )
             for t in self.traces:
                 where = t.source_path or t.session_id
-                lines.append(f"- [{t.provider}] {where} {t.summary}".rstrip())
+                lines.append(f"- [{t.provider}] {where} (session {t.session_id}) {t.summary}".rstrip())
+                for s in t.segments:
+                    if s.kind == "prompt":
+                        lines.append(f'    {s.id} PROMPT "{s.text}"')
+                    else:
+                        target = f" {s.target}" if s.target else ""
+                        lines.append(f"    {s.id} TOOL {s.tool}{target}")
         return "\n".join(lines)
 
 
@@ -230,6 +248,43 @@ def _trail_phrase(strength: str) -> str:
     return "recorded in a decision document"
 
 
+def _target_matches(target: str | None, anchor_file: str) -> bool:
+    """A tool-call target references the anchor file (abs or repo-relative path)."""
+    if not target:
+        return False
+    target = target.replace("\\", "/")
+    return target == anchor_file or target.endswith("/" + anchor_file)
+
+
+def _file_scoped_traces(
+    anchor_file: str, traces: tuple[TraceLocator, ...]
+) -> tuple[TraceCitation, ...]:
+    """Deterministic, file-grounded trace selection (the honest fallback).
+
+    The Claude analyst selects relevant prompts/tool-calls by judgement; with no
+    network the fallback still surfaces the tool-call segments whose target is the
+    Topic's anchor file, so the Agent trace degrades gracefully instead of vanishing.
+    """
+    citations: list[TraceCitation] = []
+    for trace in traces:
+        ids = [
+            s.id
+            for s in trace.segments
+            if s.kind == "tool_call" and _target_matches(s.target, anchor_file)
+        ]
+        if ids:
+            citations.append(
+                TraceCitation(
+                    provider=trace.provider,
+                    locator=trace.source_path or trace.session_id,
+                    relevance=f"Session touched {anchor_file}.",
+                    link_confidence="heuristic",
+                    segment_ids=tuple(ids),
+                )
+            )
+    return tuple(citations)
+
+
 # --------------------------------------------------------------------------- #
 # DeterministicAnalyst — CI default and honest fallback
 # --------------------------------------------------------------------------- #
@@ -254,10 +309,12 @@ class DeterministicAnalyst:
         surfaced = sorted(
             (c for c in index.candidates if c.surfaced), key=lambda c: -blast_score(c)
         )
-        return DiscoveryResult([self._proposal(c) for c in surfaced], self.model_id)
+        return DiscoveryResult(
+            [self._proposal(c, index.traces) for c in surfaced], self.model_id
+        )
 
     @staticmethod
-    def _proposal(candidate: Candidate) -> TopicProposal:
+    def _proposal(candidate: Candidate, traces: tuple[TraceLocator, ...] = ()) -> TopicProposal:
         anchor = candidate.anchor
         concept = _concept(anchor.risk_class, anchor.signals)
         leaf = anchor.symbol.split(".")[-1]
@@ -291,7 +348,7 @@ class DeterministicAnalyst:
                     relevance=relevance,
                 ),
             ),
-            development_traces=(),
+            development_traces=_file_scoped_traces(anchor.file, traces),
         )
 
 
@@ -307,13 +364,15 @@ trivia, and order the worklist by priority (most important first).
 
 Ground every claim in real sources. Cite code_anchors by repo-relative path and
 line number that actually exist. Cite development_traces ONLY using the trace
-locators provided to you; never invent a citation. You may report that you found
-no rationale in your searched scope, but never assert an uncited fact.
+locators provided to you, and in segment_ids list ONLY the seg ids shown under
+that trace — the specific prompts and tool calls that drove this Topic's
+decision. Never invent a citation. You may report that you found no rationale in
+your searched scope, but never assert an uncited fact.
 
 Respond with ONLY a JSON array of Topic proposals, each:
 {"title","maintenance_obligation","invariant","impact_level","impact_consequence",
  "priority_rationale","code_anchors":[{"path","lineno","end_lineno","relevance"}],
- "development_traces":[{"provider","locator","relevance","link_confidence"}]}
+ "development_traces":[{"provider","locator","relevance","link_confidence","segment_ids":["seg1"]}]}
 impact_level is "high"|"medium"|"low"; link_confidence is "exact"|"heuristic"|"hand_verified".
 Never include code blocks, patches, or replacement lines.
 """
@@ -674,12 +733,19 @@ def _coerce_traces(raw: object) -> tuple[TraceCitation, ...]:
         confidence = str(entry.get("link_confidence") or "heuristic").lower()
         if confidence not in VALID_LINK_CONFIDENCE:
             confidence = "heuristic"
+        raw_ids = entry.get("segment_ids")
+        segment_ids = (
+            tuple(str(s).strip() for s in raw_ids if str(s).strip())
+            if isinstance(raw_ids, list)
+            else ()
+        )
         traces.append(
             TraceCitation(
                 provider=str(entry.get("provider") or "claude_code"),
                 locator=locator,
                 relevance=str(entry.get("relevance") or ""),
                 link_confidence=confidence,
+                segment_ids=segment_ids,
             )
         )
     return tuple(traces)

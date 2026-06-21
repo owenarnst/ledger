@@ -16,10 +16,23 @@ from backend.analyst import (
     CodeAnchorCitation,
     DeterministicAnalyst,
     TopicProposal,
+    TraceLocator,
     create_analyst,
     parse_proposals,
 )
+from backend.ingestion import TraceSegment
 from backend.sandbox import HERO_REPO
+
+
+def _trace_locator():
+    segments = (
+        TraceSegment(id="seg0", kind="prompt", text="scope candidates to the tenant before rerank"),
+        TraceSegment(id="seg1", kind="tool_call", tool="Edit", target="retrieval/rerank.py"),
+        TraceSegment(id="seg2", kind="tool_call", tool="Bash", target="python -m pytest"),
+    )
+    return TraceLocator(
+        provider="claude_code", session_id="s1", source_path="x.jsonl", segments=segments
+    )
 
 
 def _index():
@@ -168,6 +181,30 @@ def test_claude_analyst_prompt_seeds_the_recall_index():
     assert "Candidate decision anchors" in prompt
 
 
+def test_digest_lists_trace_segments_with_their_ids():
+    index = AnalystIndex.from_repo(HERO_REPO, traces=(_trace_locator(),))
+    digest = index.digest()
+    # The analyst sees each segment with the id it must cite.
+    assert "seg0 PROMPT" in digest
+    assert "scope candidates to the tenant before rerank" in digest
+    assert "seg1 TOOL Edit retrieval/rerank.py" in digest
+    assert "segment_ids" in digest  # the citing instruction
+
+
+def test_deterministic_analyst_file_scopes_trace_segments_as_fallback():
+    index = AnalystIndex.from_repo(HERO_REPO, traces=(_trace_locator(),))
+    proposals = DeterministicAnalyst().discover(HERO_REPO, index).proposals
+
+    cited = [p for p in proposals if p.development_traces]
+    assert cited, "expected the rerank.py topic to pick up the file-scoped trace"
+    trace = cited[0].development_traces[0]
+    assert trace.provider == "claude_code"
+    assert trace.link_confidence == "heuristic"
+    # Only the tool calls touching the anchor file are cited — not the prompt
+    # (prompts have no file association) nor the unrelated `pytest` Bash call.
+    assert trace.segment_ids == ("seg1",)
+
+
 def test_parse_proposals_reads_a_result_enveloped_json_array():
     inner = json.dumps(
         [
@@ -194,6 +231,30 @@ def test_parse_proposals_reads_a_result_enveloped_json_array():
     assert p.impact_level == "high"
     assert p.code_anchors[0].lineno == 10
     assert p.development_traces[0].link_confidence == "hand_verified"
+
+
+def test_parse_proposals_reads_cited_trace_segment_ids():
+    inner = json.dumps(
+        [
+            {
+                "title": "Tenant isolation in retrieval",
+                "invariant": "Filter by tenant before ranking.",
+                "impact_level": "high",
+                "code_anchors": [{"path": "retrieval/rerank.py", "lineno": 10}],
+                "development_traces": [
+                    {
+                        "provider": "claude_code",
+                        "locator": "x.jsonl:4",
+                        "relevance": "authored the filter",
+                        "link_confidence": "hand_verified",
+                        "segment_ids": ["seg0", "seg2"],
+                    }
+                ],
+            }
+        ]
+    )
+    proposals = parse_proposals(json.dumps({"result": inner}))
+    assert proposals[0].development_traces[0].segment_ids == ("seg0", "seg2")
 
 
 def test_parse_proposals_drops_items_without_title_or_anchor():
