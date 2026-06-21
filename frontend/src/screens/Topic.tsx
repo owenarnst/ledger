@@ -22,7 +22,9 @@ interface TopicProps {
 
 export default function Topic({ detail, heroPracticed, histStats, showLog, onToggleLog, onStartCheck, onBack }: TopicProps) {
   const r = deriveReceipt(detail)
-  const canCheck = !!detail.current_revision
+  // A check is offered only when the backend has a curated recipe for this
+  // Topic (and a revision to sandbox). Otherwise the backend refuses it.
+  const canCheck = !!detail.current_revision && !!detail.checkable
   const heroBadgeCss = heroPracticed ? badge('practiced') : badge('recommended')
   const heroBadgeLabel = heroPracticed ? 'Practiced' : 'Check recommended'
   const heroCtaLabel = heroPracticed ? 'Practice again' : 'Start check'
@@ -80,7 +82,7 @@ export default function Topic({ detail, heroPracticed, histStats, showLog, onTog
               boxShadow: canCheck ? '0 1px 0 rgba(0,0,0,0.2)' : 'none',
             }}
           >
-            {canCheck ? heroCtaLabel : 'No sandbox available'}
+            {canCheck ? heroCtaLabel : 'No check available'}
           </button>
         </div>
 
@@ -139,15 +141,30 @@ export default function Topic({ detail, heroPracticed, histStats, showLog, onTog
             <div style={{ border: '1px solid var(--bd)', borderRadius: 12, background: 'var(--panel)', overflow: 'hidden' }}>
               <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>Authoring receipt</div>
-                <span style={chipForKind(r.providerChipKind as any)}>{r.providerLabel}</span>
-                <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, fontFamily: mono, fontSize: 10, color: 'var(--faint)' }}>
-                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
-                    <path d="M4 7V5a4 4 0 0 1 8 0v2" stroke="currentColor" strokeWidth="1.3" />
-                    <rect x="3" y="7" width="10" height="6.5" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
-                  </svg>
-                  imported from logs
-                </span>
+                {r.hasReceipt ? (
+                  <>
+                    <span style={chipForKind(r.providerChipKind as any)}>{r.providerLabel}</span>
+                    <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, fontFamily: mono, fontSize: 10, color: 'var(--faint)' }}>
+                      <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+                        <path d="M4 7V5a4 4 0 0 1 8 0v2" stroke="currentColor" strokeWidth="1.3" />
+                        <rect x="3" y="7" width="10" height="6.5" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+                      </svg>
+                      imported from logs
+                    </span>
+                  </>
+                ) : (
+                  <span style={{ marginLeft: 'auto', fontFamily: mono, fontSize: 10, color: 'var(--faint)' }}>
+                    extracted from code
+                  </span>
+                )}
               </div>
+
+              {!r.hasReceipt && (
+                <div style={{ padding: '14px 16px', fontSize: 12.5, color: 'var(--mut)', lineHeight: 1.55 }}>
+                  No authoring receipt. Ledger surfaced this decision from the code itself, not from a
+                  linked coding session — what it searched for the reasoning is shown under Code reality.
+                </div>
+              )}
 
               {r.toolSequence.length > 0 && (
                 <div style={{ padding: '13px 16px', borderBottom: '1px solid var(--bd)' }}>
@@ -171,20 +188,22 @@ export default function Topic({ detail, heroPracticed, histStats, showLog, onTog
                 </div>
               )}
 
-              <div style={{ padding: '11px 16px', borderTop: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontFamily: mono, fontSize: 10.5, color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {[r.sourcePath, r.linkConfidence].filter(Boolean).join(' · ') || 'no source recorded'}
-                </span>
-                {(r.toolSequence.length > 0 || r.sessionId) && (
-                  <span
-                    className="lg-hover-underline"
-                    onClick={onToggleLog}
-                    style={{ marginLeft: 'auto', flex: 'none', fontSize: 11.5, color: 'var(--accent)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                  >
-                    {showLog ? 'Hide session record' : 'View session record →'}
+              {r.hasReceipt && (
+                <div style={{ padding: '11px 16px', borderTop: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontFamily: mono, fontSize: 10.5, color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {[r.sourcePath, r.linkConfidence].filter(Boolean).join(' · ') || 'no source recorded'}
                   </span>
-                )}
-              </div>
+                  {(r.toolSequence.length > 0 || r.sessionId) && (
+                    <span
+                      className="lg-hover-underline"
+                      onClick={onToggleLog}
+                      style={{ marginLeft: 'auto', flex: 'none', fontSize: 11.5, color: 'var(--accent)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                    >
+                      {showLog ? 'Hide session record' : 'View session record →'}
+                    </span>
+                  )}
+                </div>
+              )}
 
               {showLog && (
                 <div className="lg-scroll" style={{ borderTop: '1px solid var(--bd)', background: '#121110', maxHeight: 200, overflow: 'auto' }}>

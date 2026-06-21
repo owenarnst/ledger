@@ -8,7 +8,13 @@ from pydantic import BaseModel
 
 from .hooks import DEFAULT_SPOOL_DIR, drain_spool, reset_ledger
 from .ingestion import DEFAULT_PROVIDER, adapter_for
-from .repository import DEFAULT_DB_PATH, DEFAULT_SANDBOX_ROOT, LedgerRepository
+from .repository import (
+    DEFAULT_DB_PATH,
+    DEFAULT_SANDBOX_ROOT,
+    LedgerRepository,
+    RecipeValidationError,
+    TopicNotCheckableError,
+)
 
 
 class FileUpdate(BaseModel):
@@ -63,6 +69,10 @@ class ResetRequest(BaseModel):
     spool_dir: str | None = None
 
 
+class ExtractRequest(BaseModel):
+    repo_path: str
+
+
 def create_app(
     db_path: Path = DEFAULT_DB_PATH,
     sandbox_root: Path = DEFAULT_SANDBOX_ROOT,
@@ -79,6 +89,10 @@ def create_app(
     @app.get("/api/projects")
     def list_projects() -> list[dict]:
         return repo.list_projects()
+
+    @app.post("/api/seed-demo")
+    def seed_demo() -> dict:
+        return repo.seed_demo()
 
     @app.get("/api/topics")
     def list_all_topics() -> list[dict]:
@@ -110,9 +124,32 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.post("/api/extract")
+    def extract_topics(payload: ExtractRequest) -> dict:
+        try:
+            return repo.extract_or_refresh_topics(payload.repo_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/curate-hero")
+    def curate_hero(payload: ExtractRequest) -> dict:
+        try:
+            return repo.install_repo_check_recipe(payload.repo_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RecipeValidationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     @app.get("/api/projects/{project_slug}/topics")
     def list_topics(project_slug: str) -> list[dict]:
         return repo.list_topics(project_slug)
+
+    @app.get("/api/projects/{project_slug}/analysis")
+    def analysis_status(project_slug: str) -> dict:
+        try:
+            return repo.get_analysis_status(project_slug)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="project not found") from exc
 
     @app.get("/api/topics/{topic_id}")
     def get_topic(topic_id: str) -> dict:
@@ -133,6 +170,8 @@ def create_app(
     def create_check_alias(payload: CheckRequest) -> dict:
         try:
             return repo.create_check(payload.topic_id)
+        except TopicNotCheckableError as exc:
+            raise HTTPException(status_code=409, detail="topic is not checkable") from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="topic not found") from exc
 
@@ -140,6 +179,8 @@ def create_app(
     def create_check(topic_id: str) -> dict:
         try:
             return repo.create_check(topic_id)
+        except TopicNotCheckableError as exc:
+            raise HTTPException(status_code=409, detail="topic is not checkable") from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="topic not found") from exc
 

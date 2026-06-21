@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docs-search-api"
+version = "0.1.0"
+description = "A small multi-tenant document retrieval service with deterministic ranking."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+
+[tool.setuptools]
+packages = ["retrieval"]
+py-modules = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # Starlette's TestClient emits a deprecation notice about its httpx usage;
+    # it is third-party noise unrelated to this service.
+    "ignore:Using .httpx. with .starlette.testclient. is deprecated",
+]

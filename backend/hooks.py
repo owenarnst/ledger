@@ -47,7 +47,11 @@ def build_session_start_nudge(
     project = repo.initialize_project_from_repo(cwd)
     topics = repo.list_topics(project["slug"])
     ready_states = {"check_recommended", "code_changed_since_practice"}
-    ready = sum(1 for topic in topics if topic["state"] in ready_states)
+    # A check is only "ready" when the Topic both wants one and has a curated
+    # recipe to run; file activity alone never counts.
+    ready = sum(
+        1 for topic in topics if topic["state"] in ready_states and topic.get("checkable")
+    )
     return f"Ledger: {ready} checks ready for {project['slug']} · Open {base_url}/p/{project['slug']}"
 
 

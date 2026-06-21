@@ -12,8 +12,9 @@ const STATE_BADGE: Record<string, { badge: string; badgeLabel: string; faint?: b
   in_progress: { badge: 'recommended', badgeLabel: 'In progress' },
 }
 
-// States where an ownership check is offered. The first such topic (lowest rank)
-// is the demo hero — the one grounded with a revision the backend can sandbox.
+// States where an ownership check would be offered, *if* the Topic also carries
+// a curated recipe (topic.checkable). The first topic that is both actionable
+// and checkable becomes the demo hero — the one the backend can sandbox.
 const ACTIONABLE = new Set(['check_recommended', 'code_changed_since_practice', 'in_progress'])
 
 export const isActionable = (state: string): boolean => ACTIONABLE.has(state)
@@ -55,7 +56,7 @@ export function toCards(topics: Topic[]): Card[] {
   let heroTaken = false
   return topics.map((t) => {
     const sb = badgeForState(t.state)
-    const isHero = !heroTaken && ACTIONABLE.has(t.state)
+    const isHero = !heroTaken && ACTIONABLE.has(t.state) && !!t.checkable
     if (isHero) heroTaken = true
     const callers = `${t.caller_count} ${t.caller_count === 1 ? 'caller' : 'callers'}`
     const chips = [
@@ -87,6 +88,10 @@ export interface Receipt {
   code: any
   receipt: any
   trail: any
+  // True only when a real conversation receipt grounds this Topic. Extracted
+  // topics carry code + trail evidence but no session link, so the UI must not
+  // imply an authoring receipt it doesn't have.
+  hasReceipt: boolean
   provider: string
   providerLabel: string
   providerChipKind: string
@@ -110,6 +115,7 @@ export function deriveReceipt(detail: TopicDetail): Receipt {
     code,
     receipt,
     trail,
+    hasReceipt: !!receipt,
     provider,
     providerLabel: pm.label,
     providerChipKind: pm.chip,

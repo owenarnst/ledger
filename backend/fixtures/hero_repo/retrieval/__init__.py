@@ -1,2 +1,1 @@
-"""Demo retrieval package."""
-
+"""Multi-tenant document retrieval pipeline."""

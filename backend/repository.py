@@ -3,17 +3,121 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .analyst import (
+    ANALYSIS_SCHEMA_VERSION,
+    Analyst,
+    AnalystIndex,
+    DiscoveryResult,
+    TraceLocator,
+    create_analyst,
+)
 from .coach import Coach, create_coach
 from .db import connect, initialize_schema
+from .extraction import resolve_head_sha
 from .ingestion import DEFAULT_PROVIDER, IngestionEvent, adapter_for
-from .sandbox import create_hero_sandbox, run_pytest
+from .sandbox import create_sandbox_from_recipe, run_test_command, validate_recipe
+from .verifier import VerificationResult, VerifiedTopic, verify_proposals
 
 
 DEFAULT_DB_PATH = Path.home() / ".ledger" / "ledger.db"
 DEFAULT_SANDBOX_ROOT = Path.home() / ".ledger" / "sandboxes"
+
+DEMO_PROJECT_ID = "project-docs-api"
+
+# Directories whose contents are never repository decision sites, even when a
+# transcript's tool call touched a file inside them.
+NON_REPO_DIR_PARTS = frozenset(
+    {".git", ".venv", "venv", "node_modules", ".claude", "__pycache__", ".pytest_cache"}
+)
+
+
+class TopicNotCheckableError(Exception):
+    """Raised when a Check is requested for a Topic that has no curated recipe."""
+
+
+class RecipeValidationError(Exception):
+    """Raised when a repo-derived recipe fails baseline-green -> mutant-red."""
+
+
+@dataclass(frozen=True)
+class RepoCheckSpec:
+    """A curated, disclosed spec for one repo-derived check.
+
+    It pins a real decision anchor, a curated substring mutation, the test
+    command, and the test that mutation must turn red. ``revision_sha=None``
+    means "pin the repository's current HEAD at install time" — the recipe is
+    immutable once installed, but install isn't brittle to a hardcoded SHA.
+    """
+
+    file: str
+    symbol: str
+    target_file: str
+    test_command: str
+    target_test: str
+    mutation_before: str
+    mutation_after: str
+    title: str | None = None
+    summary: str | None = None
+    invariant: str | None = None
+    revision_sha: str | None = None
+
+
+# The one curated repo-derived check (Step 2). Tenant isolation in the docs
+# search pipeline: drop the tenant filter and the cross-tenant test goes red.
+HERO_REPO_CHECK = RepoCheckSpec(
+    file="retrieval/rerank.py",
+    symbol="visible_documents_for_tenant",
+    target_file="retrieval/rerank.py",
+    test_command="python -m pytest tests",
+    target_test="tests/test_pipeline.py::test_search_never_returns_another_tenants_documents",
+    mutation_before="return [doc for doc in documents if doc.tenant_id == tenant_id]",
+    mutation_after="return list(documents)",
+    title="Tenant isolation in retrieval",
+    summary=(
+        "Retrieval candidates must be scoped to the requesting tenant before "
+        "ranking, so one tenant can never see another tenant's documents."
+    ),
+    invariant=(
+        "visible_documents_for_tenant must filter candidates down to the "
+        "requesting tenant before they are ranked and returned."
+    ),
+)
+
+
+# Derived display facts (ADR-0002): not model claims. Ownership status comes from
+# the persisted lifecycle; impact level falls back to risk-class when the analyst
+# did not supply one; the evidence summary is computed from accepted counts.
+_OWNERSHIP_STATUS = {
+    "check_recommended": "Check recommended",
+    "in_progress": "In progress",
+    "practiced": "Practiced",
+    "code_changed_since_practice": "Code changed since practice",
+    "revisit_suggested": "Revisit suggested",
+}
+_IMPACT_BY_RISK = {
+    "persistence": "high",
+    "external_api": "high",
+    "ranking": "medium",
+    "retrieval": "medium",
+    "general": "low",
+}
+_PROVIDER_LABEL = {"claude_code": "Claude", "codex": "Codex"}
+
+
+def _ownership_status(state: str) -> str:
+    return _OWNERSHIP_STATUS.get(state, state.replace("_", " ").capitalize())
+
+
+def _provider_label(provider: str | None) -> str:
+    return _PROVIDER_LABEL.get(provider or "", (provider or "session").replace("_", " ").title())
+
+
+def _is_trace_evidence(kind: str) -> bool:
+    return kind == "trace" or kind.endswith("_receipt")
 
 
 class LedgerRepository:
@@ -28,20 +132,29 @@ class LedgerRepository:
         self.coach = coach or create_coach()
 
     def initialize(self) -> None:
+        """Prepare the schema only. Demo content is never seeded implicitly."""
         with connect(self.db_path) as conn:
             initialize_schema(conn)
-            if conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 0:
-                self._seed(conn)
-            else:
-                self._ensure_seeded_revisions(conn)
 
     def initialize_schema(self) -> None:
         with connect(self.db_path) as conn:
             initialize_schema(conn)
 
-    def seed_demo_data(self) -> None:
+    def seed_demo(self) -> dict[str, Any]:
+        """Explicitly install the curated demo project. Idempotent."""
         with connect(self.db_path) as conn:
-            self._seed(conn)
+            initialize_schema(conn)
+            if not conn.execute(
+                "SELECT 1 FROM projects WHERE id = ?", (DEMO_PROJECT_ID,)
+            ).fetchone():
+                self._seed_demo(conn)
+            return dict(
+                conn.execute("SELECT * FROM projects WHERE id = ?", (DEMO_PROJECT_ID,)).fetchone()
+            )
+
+    # Backwards-compatible alias.
+    def seed_demo_data(self) -> dict[str, Any]:
+        return self.seed_demo()
 
     def list_projects(self) -> list[dict[str, Any]]:
         with connect(self.db_path) as conn:
@@ -49,22 +162,22 @@ class LedgerRepository:
 
     def list_all_topics(self) -> list[dict[str, Any]]:
         with connect(self.db_path) as conn:
-            return self._rows(conn.execute("SELECT * FROM topics ORDER BY rank"))
+            rows = conn.execute("SELECT * FROM topics ORDER BY rank").fetchall()
+            return [self._decorate_topic(conn, row) for row in rows]
 
     def list_topics(self, project_slug: str) -> list[dict[str, Any]]:
         with connect(self.db_path) as conn:
-            return self._rows(
-                conn.execute(
-                    """
-                    SELECT topics.*
-                    FROM topics
-                    JOIN projects ON projects.id = topics.project_id
-                    WHERE projects.slug = ?
-                    ORDER BY topics.rank
-                    """,
-                    (project_slug,),
-                )
-            )
+            rows = conn.execute(
+                """
+                SELECT topics.*
+                FROM topics
+                JOIN projects ON projects.id = topics.project_id
+                WHERE projects.slug = ?
+                ORDER BY topics.rank
+                """,
+                (project_slug,),
+            ).fetchall()
+            return [self._decorate_topic(conn, row) for row in rows]
 
     def initialize_project_from_repo(
         self,
@@ -76,27 +189,34 @@ class LedgerRepository:
         if not path.exists() or not path.is_dir():
             raise ValueError(f"repository path does not exist: {repo_path}")
 
-        slug = self._slugify(name or path.name)
-        project_id = f"project-{slug}"
         with connect(self.db_path) as conn:
+            # Identity is the resolved repo path. A project is never re-homed to a
+            # different path, so a basename/slug collision can't hijack another repo.
             existing = conn.execute(
-                "SELECT * FROM projects WHERE repo_path = ? OR slug = ?",
-                (str(path), slug),
+                "SELECT * FROM projects WHERE repo_path = ?", (str(path),)
             ).fetchone()
             if existing:
-                conn.execute(
-                    "UPDATE projects SET name = ?, repo_path = ? WHERE id = ?",
-                    (name or path.name, str(path), existing["id"]),
+                if name and name != existing["name"]:
+                    conn.execute(
+                        "UPDATE projects SET name = ? WHERE id = ?", (name, existing["id"])
+                    )
+                    conn.commit()
+                return dict(
+                    conn.execute(
+                        "SELECT * FROM projects WHERE id = ?", (existing["id"],)
+                    ).fetchone()
                 )
-                conn.commit()
-                return dict(conn.execute("SELECT * FROM projects WHERE id = ?", (existing["id"],)).fetchone())
 
+            slug = self._unique_slug(conn, name or path.name)
+            project_id = f"project-{slug}"
             conn.execute(
-                "INSERT INTO projects (id, slug, name, repo_path) VALUES (?, ?, ?, ?)",
+                "INSERT INTO projects (id, slug, name, repo_path, is_demo) VALUES (?, ?, ?, ?, 0)",
                 (project_id, slug, name or path.name, str(path)),
             )
             conn.commit()
-            return dict(conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone())
+            return dict(
+                conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+            )
 
     def record_hook_event(
         self,
@@ -108,17 +228,32 @@ class LedgerRepository:
         payload: dict[str, Any] | None = None,
         provider: str = DEFAULT_PROVIDER,
     ) -> dict[str, Any]:
+        """Record provenance (session + hook event) for repository activity.
+
+        Ingestion never mints Topics. Changed files are containment-filtered to
+        this repository so cross-repo and temp-file noise never enters the ledger.
+        """
+        project = self.initialize_project_from_repo(cwd)
+        repo_path = Path(project["repo_path"])
+        payload = dict(payload or {})
+        payload["changed_files"] = self._contained_repo_files(
+            repo_path, payload.get("changed_files") or []
+        )
         event = IngestionEvent(
             provider=provider,
             event_type=event_type,
             cwd=str(cwd),
             branch=branch,
             head_sha=head_sha,
-            payload=payload or {},
+            payload=payload,
         )
-        project = self.initialize_project_from_repo(event.cwd)
         with connect(self.db_path) as conn:
             self._upsert_session(conn, project["id"], event)
+            if head_sha:
+                conn.execute(
+                    "INSERT INTO commits (sha, project_id) VALUES (?, ?) ON CONFLICT(sha) DO NOTHING",
+                    (head_sha, project["id"]),
+                )
             cursor = conn.execute(
                 """
                 INSERT INTO hook_events (project_id, provider, event_type, branch, head_sha, payload_json)
@@ -138,14 +273,17 @@ class LedgerRepository:
                 conn.execute("SELECT * FROM hook_events WHERE id = ?", (cursor.lastrowid,)).fetchone()
             )
 
-        topics = self.extract_or_refresh_topics(project["id"])
-        return {"project": project, "event": stored_event, "topics": topics}
+        return {
+            "project": project,
+            "event": stored_event,
+            "topics": self.list_topics(project["slug"]),
+        }
 
     def import_provider_sessions(self, provider: str, root: str | Path) -> dict[str, Any]:
         adapter = adapter_for(provider)
         events = adapter.read_sessions(root)
-        imported = []
-        topics: list[dict[str, Any]] = []
+        imported: list[dict[str, Any]] = []
+        last_slug: str | None = None
         for event in events:
             result = self.record_hook_event(
                 provider=event.provider,
@@ -156,172 +294,430 @@ class LedgerRepository:
                 payload=event.payload,
             )
             imported.append(result["event"])
-            topics = result["topics"]
-        return {"provider": provider, "imported": len(imported), "events": imported, "topics": topics}
+            last_slug = result["project"]["slug"]
+        return {
+            "provider": provider,
+            "imported": len(imported),
+            "events": imported,
+            "topics": self.list_topics(last_slug) if last_slug else [],
+        }
 
-    def extract_or_refresh_topics(self, project_id: str) -> list[dict[str, Any]]:
+    # ------------------------------------------------------------------ #
+    # Topic extraction (Step 3) — deterministic evidence pipeline
+    # ------------------------------------------------------------------ #
+
+    def extract_or_refresh_topics(
+        self,
+        repo_path: str | Path,
+        *,
+        analyst: Analyst | None = None,
+    ) -> dict[str, Any]:
+        """Derive the worklist via agentic discovery, persisting grounded topics.
+
+        Per ADR-0002 the Topic Analyst (Claude Code, or the deterministic
+        fallback) decides worklist membership and order; deterministic code only
+        seeds a recall index and resolves the analyst's cited locators before
+        persisting. The repository layer no longer gates or ranks. Re-running is
+        idempotent: a topic gains a new immutable revision only when the code its
+        primary anchor cites changes fingerprint.
+        """
+        project = self.initialize_project_from_repo(repo_path)
+        repo_root = Path(project["repo_path"])
+        analyst = analyst or create_analyst()
+        head_sha = resolve_head_sha(repo_root)
+
+        index = AnalystIndex.from_repo(repo_root, traces=self._trace_locators(project))
+        discovery = analyst.discover(repo_root, index)
+        verification = verify_proposals(
+            discovery.proposals, repo_root=repo_root, index=index, available_traces=index.traces
+        )
+        input_scope = {
+            "repo_path": project["repo_path"],
+            "head_sha": head_sha,
+            "candidate_count": len(index.candidates),
+            "trace_count": len(index.traces),
+        }
+
+        persisted: list[str] = []
         with connect(self.db_path) as conn:
-            project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
-            if not project:
-                raise KeyError(project_id)
-            latest_event = conn.execute(
-                """
-                SELECT * FROM hook_events
-                WHERE project_id = ?
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (project_id,),
-            ).fetchone()
-            if not latest_event:
-                return self.list_topics(project["slug"])
+            existing_topics = conn.execute(
+                "SELECT COUNT(*) AS n FROM topics WHERE project_id = ?", (project["id"],)
+            ).fetchone()["n"]
+            for rank, verified in enumerate(verification.verified, start=1):
+                persisted.append(self._persist_verified_topic(conn, project, verified, rank, head_sha))
 
-            payload = json.loads(latest_event["payload_json"])
-            candidate_files = self._candidate_topic_files(Path(project["repo_path"]), payload)
-            if latest_event["head_sha"]:
-                conn.execute(
-                    """
-                    INSERT INTO commits (sha, project_id)
-                    VALUES (?, ?)
-                    ON CONFLICT(sha) DO NOTHING
-                    """,
-                    (latest_event["head_sha"], project_id),
-                )
-            for rank, relative_path in enumerate(candidate_files, start=1):
-                topic_id = f"{project_id}-{self._slugify(relative_path)}"
-                revision_id = f"{topic_id}-rev-1"
-                title = f"Understand {relative_path}"
-                summary = f"{relative_path} changed in repository activity captured by Ledger."
-                why_now = self._hook_why_now(latest_event)
-                conn.execute(
-                    """
-                    INSERT INTO topics
-                    (id, project_id, provider, title, state, summary, why_now, risk_class, caller_count, claude_authored, rank)
-                    VALUES (?, ?, ?, ?, 'check_recommended', ?, ?, 'repo_activity', 1, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        provider = excluded.provider,
-                        state = excluded.state,
-                        summary = excluded.summary,
-                        why_now = excluded.why_now,
-                        claude_authored = excluded.claude_authored,
-                        rank = excluded.rank
-                    """,
-                    (
-                        topic_id,
-                        project_id,
-                        latest_event["provider"],
-                        title,
-                        summary,
-                        why_now,
-                        int(latest_event["event_type"].lower() == "sessionstart"),
-                        rank,
-                    ),
-                )
-                conn.execute(
-                    """
-                    INSERT INTO topic_revisions
-                    (id, topic_id, revision, commit_sha, code_path, invariant, risk_class, fingerprint)
-                    VALUES (?, ?, 1, ?, ?, ?, 'repo_activity', ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        commit_sha = excluded.commit_sha,
-                        code_path = excluded.code_path,
-                        invariant = excluded.invariant,
-                        risk_class = excluded.risk_class,
-                        fingerprint = excluded.fingerprint
-                    """,
-                    (
-                        revision_id,
-                        topic_id,
-                        latest_event["head_sha"],
-                        relative_path,
-                        f"Understand and safely maintain {relative_path}.",
-                        f"{topic_id}:{latest_event['head_sha'] or 'unknown'}",
-                    ),
-                )
-                conn.execute("DELETE FROM evidence WHERE topic_id = ?", (topic_id,))
-                conn.executemany(
-                    """
-                    INSERT INTO evidence
-                    (topic_id, provider, session_id, source_path, tool_sequence_json, link_confidence, kind, title, body)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        (
-                            topic_id,
-                            latest_event["provider"],
-                            None,
-                            None,
-                            "[]",
-                            "heuristic",
-                            "code",
-                            relative_path,
-                            self._summarize_file(Path(project["repo_path"]) / relative_path),
-                        ),
-                        (
-                            topic_id,
-                            latest_event["provider"],
-                            payload.get("session_id"),
-                            payload.get("source_path"),
-                            self._tool_sequence_json(payload),
-                            payload.get("link_confidence") or "heuristic",
-                            self._receipt_kind(latest_event["provider"]),
-                            self._hook_event_title(latest_event),
-                            self._hook_event_body(latest_event),
-                        ),
-                        (
-                            topic_id,
-                            latest_event["provider"],
-                            None,
-                            None,
-                            "[]",
-                            "heuristic",
-                            "hook_event",
-                            self._hook_event_title(latest_event),
-                            self._hook_event_body(latest_event),
-                        ),
-                    ],
-                )
-                conn.execute("DELETE FROM revision_evidence WHERE topic_revision_id = ?", (revision_id,))
-                evidence_rows = conn.execute(
-                    "SELECT id, kind FROM evidence WHERE topic_id = ?",
-                    (topic_id,),
-                ).fetchall()
-                conn.executemany(
-                    """
-                    INSERT INTO revision_evidence (topic_revision_id, evidence_id, role, confidence)
-                    VALUES (?, ?, ?, 'heuristic')
-                    """,
-                    [(revision_id, row["id"], row["kind"]) for row in evidence_rows],
-                )
-                conn.execute(
-                    """
-                    INSERT INTO topic_events (topic_id, topic_revision_id, event_type, body)
-                    VALUES (?, ?, 'refreshed', ?)
-                    """,
-                    (topic_id, revision_id, self._hook_event_body(latest_event)),
-                )
+            if verification.verified:
+                status, analysis_source = "verified", discovery.model_id
+            elif existing_topics:
+                # Fallback: never wipe — retain the last verified worklist.
+                status, analysis_source = "empty", "last_verified"
+            else:
+                status, analysis_source = "empty", "pending"
+
+            self._record_analysis_run(conn, project, discovery, verification, status, input_scope)
             conn.commit()
-            return self.list_topics(project["slug"])
+
+        return {
+            "project": project,
+            "head_sha": head_sha,
+            "analysis_source": analysis_source,
+            "considered": len(index.candidates),
+            "surfaced": len(persisted),
+            "rejected": len(verification.rejected),
+            "topics": self.list_topics(project["slug"]),
+        }
+
+    def _record_analysis_run(
+        self, conn: Any, project: dict[str, Any], discovery: DiscoveryResult,
+        verification: VerificationResult, status: str, input_scope: dict[str, Any],
+    ) -> None:
+        rejected = [{"title": r.title, "reason": r.reason} for r in verification.rejected]
+        conn.execute(
+            """
+            INSERT INTO analysis_runs
+            (project_id, analyst_model, schema_version, input_scope_json, raw_output,
+             proposed_count, verified_count, rejected_json, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (project["id"], discovery.model_id, ANALYSIS_SCHEMA_VERSION,
+             json.dumps(input_scope), discovery.raw_output,
+             len(discovery.proposals), len(verification.verified),
+             json.dumps(rejected), status),
+        )
+
+    def _trace_locators(self, project: dict[str, Any]) -> tuple[TraceLocator, ...]:
+        """Development traces the analyst is allowed to cite (recall material)."""
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT id, provider, source_path FROM sessions WHERE project_id = ? ORDER BY id",
+                (project["id"],),
+            ).fetchall()
+        return tuple(
+            TraceLocator(provider=r["provider"], session_id=r["id"], source_path=r["source_path"])
+            for r in rows
+        )
+
+    def _persist_verified_topic(
+        self, conn: Any, project: dict[str, Any], verified: VerifiedTopic, rank: int,
+        head_sha: str | None,
+    ) -> str:
+        """Persist one verified topic: immutable revision + grouped evidence.
+
+        Topic identity rides the primary verified anchor's file+symbol; a new
+        immutable revision is minted only when the accepted excerpt's hash
+        changes. Grouped Code-anchor and Development-trace evidence carry the
+        verifier's excerpt hash, relevance, and link confidence. No
+        ``missing_reasoning`` evidence is emitted — absence is never a fact.
+        """
+        primary = verified.primary
+        proposal = verified.proposal
+        topic_id = self._topic_id_for(project["slug"], primary.path, primary.symbol)
+
+        latest = self._current_revision(conn, topic_id)
+        if latest is None:
+            revision_number, new_revision = 1, True
+        elif latest["fingerprint"] != verified.fingerprint:
+            revision_number, new_revision = latest["revision"] + 1, True
+        else:
+            revision_number, new_revision = latest["revision"], False
+
+        existing = conn.execute("SELECT * FROM topics WHERE id = ?", (topic_id,)).fetchone()
+        if existing is None:
+            conn.execute(
+                """
+                INSERT INTO topics
+                (id, project_id, provider, title, state, summary, why_now,
+                 risk_class, caller_count, claude_authored, checkable, rank,
+                 impact_level, impact_consequence, priority_rationale)
+                VALUES (?, ?, 'claude_code', ?, 'check_recommended', ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)
+                """,
+                (topic_id, project["id"], proposal.title, proposal.maintenance_obligation,
+                 proposal.priority_rationale, primary.risk_class, primary.caller_count, rank,
+                 proposal.impact_level, proposal.impact_consequence, proposal.priority_rationale),
+            )
+            conn.execute(
+                "INSERT INTO topic_events (topic_id, event_type, body) VALUES (?, 'created', ?)",
+                (topic_id, f"Proposed from {primary.source_locator}"),
+            )
+        else:
+            # Refresh display facts/rank; preserve curated checkability and
+            # lifecycle. A code change under a practiced topic re-surfaces it.
+            new_state = existing["state"]
+            if new_revision and existing["state"] == "practiced":
+                new_state = "code_changed_since_practice"
+            conn.execute(
+                """
+                UPDATE topics SET title = ?, summary = ?, why_now = ?, risk_class = ?,
+                       caller_count = ?, rank = ?, state = ?,
+                       impact_level = ?, impact_consequence = ?, priority_rationale = ?
+                WHERE id = ?
+                """,
+                (proposal.title, proposal.maintenance_obligation, proposal.priority_rationale,
+                 primary.risk_class, primary.caller_count, rank, new_state,
+                 proposal.impact_level, proposal.impact_consequence, proposal.priority_rationale,
+                 topic_id),
+            )
+
+        if not new_revision:
+            return topic_id
+
+        revision_id = f"{topic_id}-rev-{revision_number}"
+        conn.execute(
+            """
+            INSERT INTO topic_revisions
+            (id, topic_id, revision, commit_sha, code_path, invariant, risk_class, fingerprint)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (revision_id, topic_id, revision_number, head_sha, primary.path,
+             proposal.invariant, primary.risk_class, verified.fingerprint),
+        )
+        for anchor in verified.anchors:
+            code_eid = conn.execute(
+                """
+                INSERT INTO evidence
+                (topic_id, provider, session_id, source_path, tool_sequence_json,
+                 link_confidence, kind, title, body, excerpt_sha, relevance)
+                VALUES (?, 'claude_code', NULL, ?, '[]', 'exact', 'code', ?, ?, ?, ?)
+                """,
+                (topic_id, anchor.source_locator, anchor.source_locator, anchor.excerpt,
+                 anchor.excerpt_sha, anchor.relevance),
+            ).lastrowid
+            conn.execute(
+                """
+                INSERT INTO revision_evidence (topic_revision_id, evidence_id, role, confidence)
+                VALUES (?, ?, 'code', 'exact')
+                """,
+                (revision_id, code_eid),
+            )
+        for trace in verified.traces:
+            trace_eid = conn.execute(
+                """
+                INSERT INTO evidence
+                (topic_id, provider, session_id, source_path, tool_sequence_json,
+                 link_confidence, kind, title, body, excerpt_sha, relevance)
+                VALUES (?, ?, ?, ?, '[]', ?, 'trace', ?, ?, NULL, ?)
+                """,
+                (topic_id, trace.provider, trace.session_id, trace.source_path,
+                 trace.link_confidence, f"{trace.provider} session", trace.relevance, trace.relevance),
+            ).lastrowid
+            conn.execute(
+                """
+                INSERT INTO revision_evidence (topic_revision_id, evidence_id, role, confidence)
+                VALUES (?, ?, 'trace', ?)
+                """,
+                (revision_id, trace_eid, trace.link_confidence),
+            )
+        if existing is not None:
+            conn.execute(
+                """
+                INSERT INTO topic_events (topic_id, topic_revision_id, event_type, body)
+                VALUES (?, ?, 'code_changed', ?)
+                """,
+                (topic_id, revision_id, f"Code changed at {primary.path}"),
+            )
+        return topic_id
+
+    def _topic_id_for(self, project_slug: str, file: str, symbol: str) -> str:
+        return self._slugify(f"{project_slug}-{Path(file).stem}-{symbol}")
+
+    # ------------------------------------------------------------------ #
+    # Curated repo-derived check (Step 2)
+    # ------------------------------------------------------------------ #
+
+    def install_repo_check_recipe(
+        self,
+        repo_path: str | Path,
+        *,
+        spec: RepoCheckSpec = HERO_REPO_CHECK,
+        analyst: Analyst | None = None,
+    ) -> dict[str, Any]:
+        """Curate one repo-derived check, gated on baseline-green -> mutant-red.
+
+        Discovery must have surfaced the spec's anchor as a real topic; this
+        pins a real revision, proves the curated mutation turns the targeted
+        test red against a green baseline, and only then persists the recipe and
+        flips the topic to checkable. The mutation is curated and disclosed —
+        nothing here is auto-generated.
+        """
+        extraction = self.extract_or_refresh_topics(repo_path, analyst=analyst)
+        project = extraction["project"]
+        repo_root = Path(project["repo_path"])
+        topic_id = self._topic_id_for(project["slug"], spec.file, spec.symbol)
+
+        with connect(self.db_path) as conn:
+            topic = conn.execute("SELECT * FROM topics WHERE id = ?", (topic_id,)).fetchone()
+        if topic is None:
+            raise RecipeValidationError(
+                f"no extracted topic for {spec.file}::{spec.symbol}; cannot curate a check"
+            )
+
+        revision_sha = spec.revision_sha or resolve_head_sha(repo_root)
+        if not revision_sha:
+            raise RecipeValidationError(
+                f"{repo_root} is not a git repository; cannot pin a revision"
+            )
+
+        validation = validate_recipe(
+            fixture_source="@repo",
+            repo_path=repo_root,
+            revision_sha=revision_sha,
+            target_file=spec.target_file,
+            test_command=spec.test_command,
+            mutation_before=spec.mutation_before,
+            mutation_after=spec.mutation_after,
+            target_test=spec.target_test,
+        )
+        if not validation.ok:
+            raise RecipeValidationError(
+                "recipe failed baseline-green -> mutant-red validation "
+                f"(baseline_passed={validation.baseline_passed}, "
+                f"mutant_failed={validation.mutant_failed}, "
+                f"target_test_failed={validation.target_test_failed})"
+            )
+
+        with connect(self.db_path) as conn:
+            revision = self._current_revision(conn, topic_id)
+            revision_id = revision["id"] if revision else None
+            # Curated, disclosed overrides for the demo hero's interpretation.
+            if spec.title:
+                conn.execute(
+                    "UPDATE topics SET title = ?, summary = ? WHERE id = ?",
+                    (spec.title, spec.summary or topic["summary"], topic_id),
+                )
+            if spec.invariant and revision_id:
+                conn.execute(
+                    "UPDATE topic_revisions SET invariant = ? WHERE id = ?",
+                    (spec.invariant, revision_id),
+                )
+            conn.execute("UPDATE topics SET checkable = 1 WHERE id = ?", (topic_id,))
+            conn.execute("DELETE FROM check_recipes WHERE topic_id = ?", (topic_id,))
+            conn.execute(
+                """
+                INSERT INTO check_recipes
+                (id, topic_id, topic_revision_id, fixture_source, revision_sha,
+                 target_file, target_test, test_command, mutation_before, mutation_after)
+                VALUES (?, ?, ?, '@repo', ?, ?, ?, ?, ?, ?)
+                """,
+                (f"recipe-{topic_id}", topic_id, revision_id, revision_sha,
+                 spec.target_file, spec.target_test, spec.test_command,
+                 spec.mutation_before, spec.mutation_after),
+            )
+            conn.execute(
+                """
+                INSERT INTO topic_events (topic_id, topic_revision_id, event_type, body)
+                VALUES (?, ?, 'check_curated', ?)
+                """,
+                (topic_id, revision_id, f"Curated repo-derived check pinned at {revision_sha[:12]}"),
+            )
+            conn.commit()
+
+        return {
+            "project": project,
+            "topic_id": topic_id,
+            "revision_sha": revision_sha,
+            "validation": {
+                "baseline_passed": validation.baseline_passed,
+                "mutant_failed": validation.mutant_failed,
+                "target_test_failed": validation.target_test_failed,
+            },
+        }
 
     def get_topic(self, topic_id: str) -> dict[str, Any]:
         with connect(self.db_path) as conn:
             topic = conn.execute("SELECT * FROM topics WHERE id = ?", (topic_id,)).fetchone()
             if not topic:
                 raise KeyError(topic_id)
-            payload = dict(topic)
+            payload = self._decorate_topic(conn, topic)
             revision = self._current_revision(conn, topic_id)
             payload["current_revision"] = dict(revision) if revision else None
-            payload["evidence"] = self._evidence_rows(
+            evidence = self._evidence_rows(
                 conn.execute(
                     """
-                    SELECT provider, session_id, source_path, tool_sequence_json, link_confidence, kind, title, body
+                    SELECT provider, session_id, source_path, tool_sequence_json,
+                           link_confidence, kind, title, body, excerpt_sha, relevance
                     FROM evidence
                     WHERE topic_id = ?
                     """,
                     (topic_id,),
                 )
             )
+            # Drop the retired "missing_reasoning" — a computed absence is never a
+            # fact (ADR-0002). Group the rest for the expanded view.
+            evidence = [item for item in evidence if item["kind"] != "missing_reasoning"]
+            payload["evidence"] = evidence
+            payload["code_anchors"] = [item for item in evidence if item["kind"] == "code"]
+            payload["development_traces"] = [
+                item for item in evidence if _is_trace_evidence(item["kind"])
+            ]
             return payload
+
+    def _decorate_topic(self, conn: Any, topic: Any) -> dict[str, Any]:
+        """Add derived display facts: ownership status, impact level, evidence summary."""
+        payload = dict(topic)
+        payload["ownership_status"] = _ownership_status(payload["state"])
+        payload["impact_level"] = payload.get("impact_level") or _IMPACT_BY_RISK.get(
+            payload["risk_class"], "low"
+        )
+        payload["evidence_summary"] = self._evidence_summary(conn, payload["id"])
+        return payload
+
+    def _evidence_summary(self, conn: Any, topic_id: str) -> str:
+        """Compact verified grounding, e.g. ``3 code anchors · 2 related Claude sessions``."""
+        rows = conn.execute(
+            "SELECT kind, provider FROM evidence WHERE topic_id = ?", (topic_id,)
+        ).fetchall()
+        code = sum(1 for row in rows if row["kind"] == "code")
+        traces = [row for row in rows if _is_trace_evidence(row["kind"])]
+        parts = [f"{code} code anchor{'' if code == 1 else 's'}"]
+        if traces:
+            label = _provider_label(traces[0]["provider"])
+            count = len(traces)
+            parts.append(f"{count} related {label} session{'' if count == 1 else 's'}")
+        return " · ".join(parts)
+
+    def get_analysis_status(self, project_slug: str) -> dict[str, Any]:
+        """The latest discovery run's verdict + the honest worklist source.
+
+        ``analysis_source`` is ``claude-code``/``deterministic`` after a verified
+        run, ``last_verified`` when the latest run produced nothing but prior
+        topics remain, and ``pending`` when nothing has been verified yet.
+        """
+        with connect(self.db_path) as conn:
+            project = conn.execute(
+                "SELECT * FROM projects WHERE slug = ?", (project_slug,)
+            ).fetchone()
+            if not project:
+                raise KeyError(project_slug)
+            run = conn.execute(
+                "SELECT * FROM analysis_runs WHERE project_id = ? ORDER BY id DESC LIMIT 1",
+                (project["id"],),
+            ).fetchone()
+            topic_count = conn.execute(
+                "SELECT COUNT(*) AS n FROM topics WHERE project_id = ?", (project["id"],)
+            ).fetchone()["n"]
+
+        if run is None:
+            return {
+                "analysis_source": "last_verified" if topic_count else "pending",
+                "status": "none",
+                "proposed_count": 0,
+                "verified_count": topic_count,
+                "rejected": [],
+            }
+        if run["status"] == "verified":
+            source = run["analyst_model"]
+        else:
+            source = "last_verified" if topic_count else "pending"
+        return {
+            "analysis_source": source,
+            "status": run["status"],
+            "analyst_model": run["analyst_model"],
+            "schema_version": run["schema_version"],
+            "proposed_count": run["proposed_count"],
+            "verified_count": run["verified_count"],
+            "rejected": json.loads(run["rejected_json"]),
+            "created_at": run["created_at"],
+        }
 
     def get_session(self, session_id: str) -> dict[str, Any]:
         with connect(self.db_path) as conn:
@@ -331,19 +727,52 @@ class LedgerRepository:
             return dict(session)
 
     def create_check(self, topic_id: str) -> dict[str, Any]:
-        check_id = uuid.uuid4().hex
-        sandbox_path = self.sandbox_root / check_id
-        create_hero_sandbox(sandbox_path)
         with connect(self.db_path) as conn:
+            topic = conn.execute("SELECT * FROM topics WHERE id = ?", (topic_id,)).fetchone()
+            if not topic:
+                raise KeyError(topic_id)
+            recipe = conn.execute(
+                "SELECT * FROM check_recipes WHERE topic_id = ?", (topic_id,)
+            ).fetchone()
+            if not recipe:
+                raise TopicNotCheckableError(topic_id)
             revision = self._current_revision(conn, topic_id)
             if not revision:
                 raise KeyError(topic_id)
+            recipe = dict(recipe)
+            revision_id = revision["id"]
+            project_row = conn.execute(
+                "SELECT repo_path FROM projects WHERE id = ?", (topic["project_id"],)
+            ).fetchone()
+            repo_path = project_row["repo_path"] if project_row else None
+
+        check_id = uuid.uuid4().hex
+        sandbox_path = self.sandbox_root / check_id
+        # A pinned revision_sha selects the repo-derived (git) path; otherwise the
+        # bundled fixture is copied. repo_path is ignored on the fixture path.
+        create_sandbox_from_recipe(
+            sandbox_path,
+            fixture_source=recipe["fixture_source"],
+            target_file=recipe["target_file"],
+            mutation_before=recipe["mutation_before"],
+            mutation_after=recipe["mutation_after"],
+            repo_path=repo_path,
+            revision_sha=recipe.get("revision_sha"),
+        )
+        with connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO checks (id, topic_id, topic_revision_id, state, sandbox_path, target_file, test_command)
-                VALUES (?, ?, ?, 'in_progress', ?, 'retrieval/rerank.py', 'python -m pytest tests')
+                VALUES (?, ?, ?, 'in_progress', ?, ?, ?)
                 """,
-                (check_id, topic_id, revision["id"], str(sandbox_path)),
+                (
+                    check_id,
+                    topic_id,
+                    revision_id,
+                    str(sandbox_path),
+                    recipe["target_file"],
+                    recipe["test_command"],
+                ),
             )
             conn.execute("UPDATE topics SET state = 'in_progress' WHERE id = ?", (topic_id,))
             conn.execute(
@@ -351,7 +780,7 @@ class LedgerRepository:
                 INSERT INTO topic_events (topic_id, topic_revision_id, event_type, body)
                 VALUES (?, ?, 'check_started', ?)
                 """,
-                (topic_id, revision["id"], check_id),
+                (topic_id, revision_id, check_id),
             )
             conn.commit()
         return self.get_check(check_id)
@@ -376,10 +805,20 @@ class LedgerRepository:
         path.write_text(content)
         return {"path": relative_path, "content": content}
 
+    def _check_file_path(self, check_id: str, relative_path: str) -> Path:
+        check = self.get_check(check_id)
+        root = Path(check["sandbox_path"]).resolve()
+        path = (root / relative_path).resolve()
+        if root not in path.parents and path != root:
+            raise ValueError("path escapes sandbox")
+        if not path.exists():
+            raise FileNotFoundError(relative_path)
+        return path
+
     def run_check(self, check_id: str) -> dict[str, Any]:
         check = self.get_check(check_id)
         try:
-            result = run_pytest(Path(check["sandbox_path"]))
+            result = run_test_command(Path(check["sandbox_path"]), check["test_command"])
             passed = result.passed
             output = result.output
             elapsed_ms = result.elapsed_ms
@@ -484,63 +923,42 @@ class LedgerRepository:
             ).fetchone()
             return row["output"] if row else "No check has been run yet."
 
-    def _candidate_topic_files(self, repo_path: Path, payload: dict[str, Any]) -> list[str]:
-        changed_files = payload.get("changed_files") or payload.get("files") or []
-        candidates = [
-            str(path)
-            for path in changed_files
-            if isinstance(path, str) and not path.endswith("/") and (repo_path / path).is_file()
-        ]
-        if candidates:
-            return candidates[:5]
+    @staticmethod
+    def _contained_repo_files(repo_path: Path, changed_files: Any) -> list[str]:
+        """Keep only the changed files that live strictly inside ``repo_path``.
 
-        discovered = []
-        for pattern in ("**/*.py", "**/*.js", "**/*.ts", "**/*.tsx", "**/*.jsx"):
-            discovered.extend(repo_path.glob(pattern))
-        return [
-            str(path.relative_to(repo_path))
-            for path in discovered
-            if ".git" not in path.parts and "node_modules" not in path.parts
-        ][:5]
-
-    def _summarize_file(self, path: Path) -> str:
-        if not path.exists():
-            return "File was referenced by a hook event but is no longer present."
-        lines = path.read_text(errors="replace").splitlines()
-        first_meaningful = next((line.strip() for line in lines if line.strip()), "")
-        if first_meaningful:
-            return f"{path.name} exists in the tracked repository. First meaningful line: {first_meaningful[:160]}"
-        return f"{path.name} exists in the tracked repository."
-
-    def _hook_why_now(self, event: Any) -> str:
-        details = [f"{event['event_type']} captured repository activity"]
-        if event["branch"]:
-            details.append(f"on branch {event['branch']}")
-        if event["head_sha"]:
-            details.append(f"at {event['head_sha'][:12]}")
-        return " ".join(details) + "."
-
-    def _hook_event_title(self, event: Any) -> str:
-        if event["branch"]:
-            return f"{event['event_type']} on {event['branch']}"
-        return event["event_type"]
-
-    def _hook_event_body(self, event: Any) -> str:
-        payload = json.loads(event["payload_json"])
-        changed = payload.get("changed_files") or payload.get("files") or []
-        changed_text = ", ".join(changed) if changed else "no changed files reported"
-        head = event["head_sha"] or "unknown HEAD"
-        return f"Hook captured {changed_text} at {head}."
-
-    def _check_file_path(self, check_id: str, relative_path: str) -> Path:
-        check = self.get_check(check_id)
-        root = Path(check["sandbox_path"]).resolve()
-        path = (root / relative_path).resolve()
-        if root not in path.parents and path != root:
-            raise ValueError("path escapes sandbox")
-        if not path.exists():
-            raise FileNotFoundError(relative_path)
-        return path
+        Absolute paths from a transcript that point outside this repo (other
+        repos, ``/var/folders`` temp files) are dropped, as are paths inside
+        well-known non-source directories. Returns repo-relative paths.
+        """
+        if not isinstance(changed_files, list):
+            return []
+        root = repo_path.expanduser().resolve()
+        kept: list[str] = []
+        seen: set[str] = set()
+        for raw in changed_files:
+            if not isinstance(raw, str) or not raw or raw.endswith("/"):
+                continue
+            candidate = Path(raw)
+            if not candidate.is_absolute():
+                candidate = root / candidate
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if resolved != root and root not in resolved.parents:
+                continue
+            try:
+                relative = resolved.relative_to(root)
+            except ValueError:
+                continue
+            if NON_REPO_DIR_PARTS.intersection(relative.parts):
+                continue
+            text = str(relative)
+            if text not in seen:
+                seen.add(text)
+                kept.append(text)
+        return kept
 
     @staticmethod
     def _rows(cursor: Any) -> list[dict[str, Any]]:
@@ -574,18 +992,14 @@ class LedgerRepository:
         slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
         return slug or "repo"
 
-    @staticmethod
-    def _receipt_kind(provider: str) -> str:
-        if provider == DEFAULT_PROVIDER:
-            return "claude_receipt"
-        return f"{provider}_receipt"
-
-    @staticmethod
-    def _tool_sequence_json(payload: dict[str, Any]) -> str:
-        sequence = payload.get("tool_sequence") or []
-        if not isinstance(sequence, list):
-            sequence = []
-        return json.dumps([str(item) for item in sequence], sort_keys=True)
+    def _unique_slug(self, conn: Any, value: str) -> str:
+        base = self._slugify(value)
+        slug = base
+        suffix = 2
+        while conn.execute("SELECT 1 FROM projects WHERE slug = ?", (slug,)).fetchone():
+            slug = f"{base}-{suffix}"
+            suffix += 1
+        return slug
 
     @staticmethod
     def _upsert_session(conn: Any, project_id: str, event: IngestionEvent) -> None:
@@ -603,10 +1017,10 @@ class LedgerRepository:
             (str(session_id), project_id, event.provider, event.payload.get("source_path")),
         )
 
-    def _seed(self, conn: Any) -> None:
+    def _seed_demo(self, conn: Any) -> None:
         conn.execute(
-            "INSERT INTO projects (id, slug, name, repo_path) VALUES (?, ?, ?, ?)",
-            ("project-docs-api", "docs-api", "Docs API", "/demo/docs-api"),
+            "INSERT INTO projects (id, slug, name, repo_path, is_demo) VALUES (?, ?, ?, ?, 1)",
+            (DEMO_PROJECT_ID, "docs-api", "Docs API", "/demo/docs-api"),
         )
         topics = [
             (
@@ -618,7 +1032,8 @@ class LedgerRepository:
                 "persistence",
                 5,
                 1,
-                1,
+                1,  # checkable
+                1,  # rank
             ),
             (
                 "rerank-threshold",
@@ -629,6 +1044,7 @@ class LedgerRepository:
                 "ranking",
                 3,
                 1,
+                0,
                 2,
             ),
             (
@@ -639,6 +1055,7 @@ class LedgerRepository:
                 "Previously practiced, but still important to the answer path.",
                 "retrieval",
                 4,
+                0,
                 0,
                 3,
             ),
@@ -651,22 +1068,20 @@ class LedgerRepository:
                 "external_api",
                 2,
                 0,
+                0,
                 4,
             ),
         ]
         conn.executemany(
             """
             INSERT INTO topics
-            (id, project_id, provider, title, state, summary, why_now, risk_class, caller_count, claude_authored, rank)
-            VALUES (?, 'project-docs-api', 'claude_code', ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, project_id, provider, title, state, summary, why_now, risk_class, caller_count, claude_authored, checkable, rank)
+            VALUES (?, 'project-docs-api', 'claude_code', ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             topics,
         )
         conn.execute(
-            """
-            INSERT INTO commits (sha, project_id)
-            VALUES ('demo-seed', 'project-docs-api')
-            """
+            "INSERT INTO commits (sha, project_id) VALUES ('demo-seed', 'project-docs-api')"
         )
         conn.execute(
             """
@@ -730,16 +1145,6 @@ class LedgerRepository:
                     "Claude Code session",
                     "Read retrieval/rerank.py -> Edit retrieval/rerank.py -> Bash python -m pytest.",
                 ),
-                (
-                    "tenant-cache-isolation",
-                    None,
-                    None,
-                    "[]",
-                    "hand_verified",
-                    "missing_reasoning",
-                    "Trail scan",
-                    "Searched ADRs, CONTEXT, README, comments, and commit messages; no tenant cache rationale found.",
-                ),
             ],
         )
         evidence_rows = conn.execute(
@@ -755,6 +1160,23 @@ class LedgerRepository:
         )
         conn.execute(
             """
+            INSERT INTO check_recipes
+            (id, topic_id, topic_revision_id, fixture_source, target_file, test_command, mutation_before, mutation_after)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "recipe-tenant-cache-isolation",
+                "tenant-cache-isolation",
+                "tenant-cache-isolation-rev-1",
+                "@hero_repo",
+                "retrieval/rerank.py",
+                "python -m pytest tests",
+                "return [doc for doc in documents if doc.tenant_id == tenant_id]",
+                "return list(documents)",
+            ),
+        )
+        conn.execute(
+            """
             INSERT INTO topic_events (topic_id, topic_revision_id, event_type, body)
             VALUES (?, ?, 'created', ?)
             """,
@@ -762,113 +1184,6 @@ class LedgerRepository:
                 "tenant-cache-isolation",
                 "tenant-cache-isolation-rev-1",
                 "Seeded demo topic revision.",
-            ),
-        )
-        conn.commit()
-
-    def _ensure_seeded_revisions(self, conn: Any) -> None:
-        topic = conn.execute(
-            "SELECT id FROM topics WHERE id = ?",
-            ("tenant-cache-isolation",),
-        ).fetchone()
-        if not topic:
-            return
-
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO sessions (id, project_id, provider, source_path)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                "claude-demo-session",
-                "project-docs-api",
-                "claude_code",
-                "~/.claude/projects/demo.jsonl",
-            ),
-        )
-        receipt = conn.execute(
-            """
-            SELECT id FROM evidence
-            WHERE topic_id = ? AND kind = 'claude_receipt'
-            """,
-            ("tenant-cache-isolation",),
-        ).fetchone()
-        if receipt:
-            conn.execute(
-                """
-                UPDATE evidence
-                SET
-                    provider = 'claude_code',
-                    session_id = ?,
-                    source_path = ?,
-                    tool_sequence_json = ?,
-                    link_confidence = 'hand_verified'
-                WHERE id = ?
-                """,
-                (
-                    "claude-demo-session",
-                    "~/.claude/projects/demo.jsonl",
-                    json.dumps(
-                        [
-                            "Read retrieval/rerank.py",
-                            "Edit retrieval/rerank.py",
-                            "Bash python -m pytest",
-                        ]
-                    ),
-                    receipt["id"],
-                ),
-            )
-
-        revision = conn.execute(
-            "SELECT id FROM topic_revisions WHERE id = ?",
-            ("tenant-cache-isolation-rev-1",),
-        ).fetchone()
-        if revision:
-            return
-
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO commits (sha, project_id)
-            VALUES ('demo-seed', 'project-docs-api')
-            """
-        )
-        conn.execute(
-            """
-            INSERT INTO topic_revisions
-            (id, topic_id, revision, commit_sha, code_path, invariant, risk_class, fingerprint)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "tenant-cache-isolation-rev-1",
-                "tenant-cache-isolation",
-                1,
-                "demo-seed",
-                "retrieval/rerank.py",
-                "Candidate documents must be filtered by tenant_id before ranking.",
-                "persistence",
-                "demo-tenant-cache-isolation-v1",
-            ),
-        )
-        evidence_rows = conn.execute(
-            "SELECT id, kind FROM evidence WHERE topic_id = ?",
-            ("tenant-cache-isolation",),
-        ).fetchall()
-        conn.executemany(
-            """
-            INSERT INTO revision_evidence (topic_revision_id, evidence_id, role, confidence)
-            VALUES ('tenant-cache-isolation-rev-1', ?, ?, 'hand_verified')
-            """,
-            [(row["id"], row["kind"]) for row in evidence_rows],
-        )
-        conn.execute(
-            """
-            INSERT INTO topic_events (topic_id, topic_revision_id, event_type, body)
-            VALUES (?, ?, 'created', ?)
-            """,
-            (
-                "tenant-cache-isolation",
-                "tenant-cache-isolation-rev-1",
-                "Backfilled demo topic revision.",
             ),
         )
         conn.commit()
