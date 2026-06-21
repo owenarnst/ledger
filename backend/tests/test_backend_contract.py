@@ -328,6 +328,9 @@ def test_contract_alias_routes_are_registered(tmp_path):
     assert "/api/checks/{check_id}/pseudocode-comments" in paths
     assert "/api/checks/{check_id}/answers" in paths
     assert "/api/topics/{topic_id}/reflections" in paths
+    # Agentic discovery routes (ADR-0002).
+    assert "/api/extract" in paths
+    assert "/api/projects/{project_slug}/analysis" in paths
 
 
 def test_claude_adapter_reads_jsonl_session_records(tmp_path):
@@ -387,7 +390,7 @@ def test_codex_adapter_reads_jsonl_session_records(tmp_path):
     assert events[0].payload["changed_files"] == ["retrieval/rerank.py"]
 
 
-def test_import_provider_sessions_creates_provider_receipt(tmp_path):
+def test_import_provider_sessions_records_session_provenance(tmp_path):
     repo_path = tmp_path / "repo"
     (repo_path / "retrieval").mkdir(parents=True)
     (repo_path / "retrieval" / "rerank.py").write_text("def rerank():\n    return []\n")
@@ -408,9 +411,10 @@ def test_import_provider_sessions_creates_provider_receipt(tmp_path):
 
     result = repo.import_provider_sessions("codex", log_path.parent)
 
+    # Importing sessions records provenance only; it never mints a Topic.
     assert result["imported"] == 1
-    topic = repo.get_topic(next(item["id"] for item in result["topics"] if "retrieval/rerank.py" in item["summary"]))
-    assert any(item["kind"] == "codex_receipt" for item in topic["evidence"])
+    assert result["topics"] == []
+    assert repo.get_session("codex-session-1")["provider"] == "codex"
 
 
 def test_hook_spool_drains_fifo_json_events(tmp_path):

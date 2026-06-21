@@ -44,7 +44,10 @@ CREATE TABLE IF NOT EXISTS topics (
     risk_class TEXT NOT NULL,
     caller_count INTEGER NOT NULL,
     claude_authored INTEGER NOT NULL DEFAULT 0,
-    rank INTEGER NOT NULL
+    rank INTEGER NOT NULL,
+    impact_level TEXT,
+    impact_consequence TEXT,
+    priority_rationale TEXT
 );
 
 CREATE TABLE IF NOT EXISTS topic_revisions (
@@ -70,7 +73,9 @@ CREATE TABLE IF NOT EXISTS evidence (
     link_confidence TEXT NOT NULL DEFAULT 'heuristic',
     kind TEXT NOT NULL,
     title TEXT NOT NULL,
-    body TEXT NOT NULL
+    body TEXT NOT NULL,
+    excerpt_sha TEXT,
+    relevance TEXT
 );
 
 CREATE TABLE IF NOT EXISTS revision_evidence (
@@ -165,6 +170,23 @@ CREATE TABLE IF NOT EXISTS coach_messages (
     response TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- One row per Topic Analyst discovery run. Makes an agentic worklist auditable:
+-- which model proposed it, against what input, and how verification adjudicated
+-- its citations (ADR-0002 "auditable and reproducible enough to debug").
+CREATE TABLE IF NOT EXISTS analysis_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    analyst_model TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    input_scope_json TEXT NOT NULL DEFAULT '{}',
+    raw_output TEXT NOT NULL DEFAULT '',
+    proposed_count INTEGER NOT NULL DEFAULT 0,
+    verified_count INTEGER NOT NULL DEFAULT 0,
+    rejected_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 MIGRATIONS = [
@@ -190,6 +212,28 @@ MIGRATIONS = [
         plan_json TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(topic_revision_id, difficulty)
+    )
+    """,
+    # ADR-0002: verified excerpts carry their hash + the analyst's relevance note;
+    # topics carry the analyst's grounded impact + priority explanation.
+    "ALTER TABLE evidence ADD COLUMN excerpt_sha TEXT",
+    "ALTER TABLE evidence ADD COLUMN relevance TEXT",
+    "ALTER TABLE topics ADD COLUMN impact_level TEXT",
+    "ALTER TABLE topics ADD COLUMN impact_consequence TEXT",
+    "ALTER TABLE topics ADD COLUMN priority_rationale TEXT",
+    """
+    CREATE TABLE IF NOT EXISTS analysis_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        analyst_model TEXT NOT NULL,
+        schema_version TEXT NOT NULL,
+        input_scope_json TEXT NOT NULL DEFAULT '{}',
+        raw_output TEXT NOT NULL DEFAULT '',
+        proposed_count INTEGER NOT NULL DEFAULT 0,
+        verified_count INTEGER NOT NULL DEFAULT 0,
+        rejected_json TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
 ]

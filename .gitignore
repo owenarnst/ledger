@@ -39,3 +39,6 @@ vite.config.*.timestamp-*
 .vscode/
 *.swp
 *~
+
+# Claude Throwaway
+tasks/

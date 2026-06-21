@@ -1,0 +1,232 @@
+{
+  "_comment": "Demo worklist seeded from a live Claude Topic Analyst run (claude-opus-4-8) on docs-search-api @8d57340. Regenerate by re-running extraction; do not hand-edit.",
+  "session": {
+    "id": "claude-demo-session",
+    "source_path": "~/.claude/projects/demo.jsonl"
+  },
+  "commit_sha": "demo-seed",
+  "topics": [
+    {
+      "id": "tenant-cache-isolation",
+      "rank": 1,
+      "state": "check_recommended",
+      "title": "Tenant isolation depends on the pre-rerank visibility filter",
+      "summary": "The store returns candidates across every tenant by design, so the pipeline MUST scope them to the requesting tenant via visible_documents_for_tenant before any result escapes. Preserve the filter's behavior, its placement immediately after store.candidates() and before rerank, and its predicate on doc.tenant_id; do not weaken it to a pass-through or move it downstream.",
+      "why_now": "Highest priority: the store is deliberately tenant-blind (store.py docstring), so this single filter is the only thing enforcing tenant isolation. A silent refactor (e.g. to list(documents) or a renamed helper) compiles cleanly and may pass shallow tests while breaking the security boundary.",
+      "risk_class": "retrieval",
+      "caller_count": 8,
+      "claude_authored": 0,
+      "impact_level": "high",
+      "impact_consequence": "If the filter is removed, weakened, or reordered, one tenant's documents leak into another tenant's search results \u2014 a cross-tenant data disclosure.",
+      "priority_rationale": "Highest priority: the store is deliberately tenant-blind (store.py docstring), so this single filter is the only thing enforcing tenant isolation. A silent refactor (e.g. to list(documents) or a renamed helper) compiles cleanly and may pass shallow tests while breaking the security boundary.",
+      "revision": {
+        "id": "tenant-cache-isolation-rev-1",
+        "revision": 1,
+        "commit_sha": "demo-seed",
+        "code_path": "retrieval/rerank.py",
+        "invariant": "Every document in a SearchResponse satisfies doc.tenant_id == request.tenant_id; the tenant-blind candidate set is never returned unfiltered.",
+        "risk_class": "retrieval",
+        "fingerprint": "72fdff49e0eaa52d"
+      },
+      "evidence": [
+        {
+          "kind": "code",
+          "source_path": "retrieval/store.py:28",
+          "title": "retrieval/store.py:28",
+          "body": "    def candidates(self, query: str) -> list[Document]:\n        \"\"\"Return documents sharing at least one token with ``query``.\n\n        Candidates span every tenant in the corpus; narrowing them to a single\n        tenant happens downstream in the pipeline.\n        \"\"\"\n        query_tokens = set(tokenize(query))\n        if not query_tokens:\n            return []\n        return [\n            document\n            for document in self._documents\n            if query_tokens & set(tokenize(document.text))\n        ]",
+          "excerpt_sha": "293265c433d94152",
+          "relevance": "candidates() is explicitly tenant-blind and matches on query tokens only, delegating tenant scoping to the pipeline.",
+          "link_confidence": "exact",
+          "session_id": null,
+          "tool_sequence": []
+        },
+        {
+          "kind": "code",
+          "source_path": "retrieval/rerank.py:18",
+          "title": "retrieval/rerank.py:18",
+          "body": "def visible_documents_for_tenant(\n    documents: list[Document], tenant_id: str\n) -> list[Document]:\n    \"\"\"Return only the documents that belong to ``tenant_id``.\"\"\"\n    return [doc for doc in documents if doc.tenant_id == tenant_id]",
+          "excerpt_sha": "72fdff49e0eaa52d",
+          "relevance": "visible_documents_for_tenant is the sole enforcement point of tenant isolation; its predicate filters on doc.tenant_id.",
+          "link_confidence": "exact",
+          "session_id": null,
+          "tool_sequence": []
+        },
+        {
+          "kind": "code",
+          "source_path": "retrieval/pipeline.py:55",
+          "title": "retrieval/pipeline.py:55",
+          "body": "    candidates = store.candidates(query)\n    scoped = visible_documents_for_tenant(candidates, tenant_id)",
+          "excerpt_sha": "fcabb8aeb01d3477",
+          "relevance": "search() calls visible_documents_for_tenant on the raw candidates before rerank, establishing the required ordering.",
+          "link_confidence": "exact",
+          "session_id": null,
+          "tool_sequence": []
+        },
+        {
+          "kind": "code",
+          "source_path": "retrieval/models.py:16",
+          "title": "retrieval/models.py:16",
+          "body": "\n    id: str\n    tenant_id: str\n    score: float\n    text: str",
+          "excerpt_sha": "f4e28c9926fc6a27",
+          "relevance": "Document carries tenant_id specifically so the pipeline can scope a shared-corpus result back to one caller.",
+          "link_confidence": "exact",
+          "session_id": null,
+          "tool_sequence": []
+        },
+        {
+          "kind": "claude_receipt",
+          "source_path": "~/.claude/projects/demo.jsonl",
+          "title": "Claude Code session",
+          "body": "Read retrieval/rerank.py -> Edit retrieval/rerank.py -> Bash python -m pytest.",
+          "excerpt_sha": null,
+          "relevance": "Build session that authored the pre-rerank tenant filter.",
+          "link_confidence": "hand_verified",
+          "session_id": "claude-demo-session",
+          "tool_sequence": [
+            "Read retrieval/rerank.py",
+            "Edit retrieval/rerank.py",
+            "Bash python -m pytest"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "docs-search-api-rerank-rerank",
+      "rank": 2,
+      "state": "check_recommended",
+      "title": "Confidence cutoff threshold is a single-source-of-truth policy",
+      "summary": "Keep MINIMUM_RERANK_SCORE as the one named place defining the drop threshold, and keep apply_confidence_cutoff running before context packing so weak matches never reach context construction. Do not reintroduce the threshold as a bare literal elsewhere or relax the comparison.",
+      "why_now": "A threshold constant is intentionally centralized to avoid scattered literals; the value (0.30) and the cutoff's position before packing are deliberate policy, but the consequence is quality degradation rather than a correctness/security break.",
+      "risk_class": "general",
+      "caller_count": 0,
+      "claude_authored": 0,
+      "impact_level": "medium",
+      "impact_consequence": "Lowering, duplicating, or bypassing the threshold lets low-confidence matches into results and context, degrading answer quality and wasting the character budget on weak documents.",
+      "priority_rationale": "A threshold constant is intentionally centralized to avoid scattered literals; the value (0.30) and the cutoff's position before packing are deliberate policy, but the consequence is quality degradation rather than a correctness/security break.",
+      "revision": {
+        "id": "docs-search-api-rerank-rerank-rev-1",
+        "revision": 1,
+        "commit_sha": "demo-seed",
+        "code_path": "retrieval/rerank.py",
+        "invariant": "No document with score < MINIMUM_RERANK_SCORE appears in the packed context or final results.",
+        "risk_class": "general",
+        "fingerprint": "7a75a9f1544812d7"
+      },
+      "evidence": [
+        {
+          "kind": "code",
+          "source_path": "retrieval/rerank.py:25",
+          "title": "retrieval/rerank.py:25",
+          "body": "def rerank(documents: list[Document]) -> list[Document]:\n    \"\"\"Order documents by descending score.\n\n    Ties are broken by ``id`` so the ordering is fully deterministic and does\n    not depend on the order candidates happened to arrive in.\n    \"\"\"\n    return sorted(documents, key=lambda doc: (-doc.score, doc.id))",
+          "excerpt_sha": "d6af64768595edb4",
+          "relevance": "rerank sorts by (-score, id) so ordering is fully deterministic and independent of candidate arrival order.",
+          "link_confidence": "exact",
+          "session_id": null,
+          "tool_sequence": []
+        },
+        {
+          "kind": "code",
+          "source_path": "retrieval/pipeline.py:35",
+          "title": "retrieval/pipeline.py:35",
+          "body": "def deduplicate(documents: list[Document]) -> list[Document]:\n    \"\"\"Collapse duplicate chunks, keeping the first occurrence of each id.\n\n    The shared corpus can surface the same chunk more than once. Duplicates are\n    resolved here, before the context window's size limit is applied, so the\n    limit is spent on distinct documents. Because this runs after reranking, the\n    first occurrence of an id is also its highest-scoring one.\n    \"\"\"\n    seen: set[str] = set()\n    unique: list[Document] = []\n    for document in documents:\n        if document.id in seen:\n            continue\n        seen.add(document.id)\n        unique.append(document)\n    return unique",
+          "excerpt_sha": "1eb62419065e185d",
+          "relevance": "deduplicate keeps the first occurrence per id and documents that this is correct only because it runs after reranking.",
+          "link_confidence": "exact",
+          "session_id": null,
+          "tool_sequence": []
+        },
+        {
+          "kind": "code",
+          "source_path": "retrieval/pipeline.py:53",
+          "title": "retrieval/pipeline.py:53",
+          "body": "def search(store: DocumentStore, query: str, tenant_id: str) -> SearchResponse:\n    \"\"\"Run the retrieval pipeline for ``query`` on behalf of ``tenant_id``.\"\"\"\n    candidates = store.candidates(query)\n    scoped = visible_documents_for_tenant(candidates, tenant_id)\n    ranked = rerank(scoped)\n    deduped = deduplicate(ranked)\n    confident = apply_confidence_cutoff(deduped)\n    packed = pack_context(confident)\n    hits = [\n        SearchHit(id=document.id, score=document.score, excerpt=excerpt_for(document))\n        for document in packed\n    ]\n    return SearchResponse(tenant_id=tenant_id, query=query, results=hits)",
+          "excerpt_sha": "879b1572d545f44c",
+          "relevance": "search() fixes the stage sequence scope -> rerank -> dedupe -> cutoff -> pack that the other stages depend on.",
+          "link_confidence": "exact",
+          "session_id": null,
+          "tool_sequence": []
+        },
+        {
+          "kind": "code",
+          "source_path": "retrieval/rerank.py:12",
+          "title": "retrieval/rerank.py:12",
+          "body": "# Documents scoring below this confidence threshold are dropped before context\n# construction. Named here so the policy lives in one place rather than as a\n# bare literal scattered through the pipeline.\nMINIMUM_RERANK_SCORE = 0.30",
+          "excerpt_sha": "7a75a9f1544812d7",
+          "relevance": "MINIMUM_RERANK_SCORE is the named single location for the confidence policy, intentionally not a scattered literal.",
+          "link_confidence": "exact",
+          "session_id": null,
+          "tool_sequence": []
+        },
+        {
+          "kind": "code",
+          "source_path": "retrieval/rerank.py:34",
+          "title": "retrieval/rerank.py:34",
+          "body": "def apply_confidence_cutoff(\n    documents: list[Document], *, minimum_score: float = MINIMUM_RERANK_SCORE\n) -> list[Document]:\n    \"\"\"Drop documents whose score is below ``minimum_score``.\"\"\"\n    return [doc for doc in documents if doc.score >= minimum_score]",
+          "excerpt_sha": "ad6d0cecd493c102",
+          "relevance": "apply_confidence_cutoff enforces the >= minimum_score filter that excludes weak matches.",
+          "link_confidence": "exact",
+          "session_id": null,
+          "tool_sequence": []
+        }
+      ]
+    },
+    {
+      "id": "docs-search-api-context-context",
+      "rank": 3,
+      "state": "check_recommended",
+      "title": "Context packing is bounded so no single document dominates the window",
+      "summary": "Preserve the two bounds: CONTEXT_CHARACTER_BUDGET caps the whole window and MAX_EXCERPT_CHARACTERS caps each document's contribution. excerpt_for and pack_context must both clamp to MAX_EXCERPT_CHARACTERS, and packing must remain a rank-ordered prefix that stops at the first document that would exceed the budget.",
+      "why_now": "These bounds protect window size and fairness across documents and are coupled (excerpt_for and pack_context both rely on the per-excerpt cap), but a violation degrades result composition rather than correctness or isolation.",
+      "risk_class": "general",
+      "caller_count": 0,
+      "claude_authored": 0,
+      "impact_level": "medium",
+      "impact_consequence": "Dropping the per-excerpt cap lets one large document overflow or monopolize the window; breaking the prefix/early-stop logic packs lower-ranked documents over higher-ranked ones, changing which results the caller sees.",
+      "priority_rationale": "These bounds protect window size and fairness across documents and are coupled (excerpt_for and pack_context both rely on the per-excerpt cap), but a violation degrades result composition rather than correctness or isolation.",
+      "revision": {
+        "id": "docs-search-api-context-context-rev-1",
+        "revision": 1,
+        "commit_sha": "demo-seed",
+        "code_path": "retrieval/context.py",
+        "invariant": "Total packed characters <= CONTEXT_CHARACTER_BUDGET, each excerpt <= MAX_EXCERPT_CHARACTERS, and the packed set is a prefix of the reranked input.",
+        "risk_class": "general",
+        "fingerprint": "982c038553f666ab"
+      },
+      "evidence": [
+        {
+          "kind": "code",
+          "source_path": "retrieval/context.py:14",
+          "title": "retrieval/context.py:14",
+          "body": "# Total size of the packed context window, in characters.\nCONTEXT_CHARACTER_BUDGET = 600\n# No single excerpt may contribute more than this many characters, so one large\n# document cannot dominate the window or overflow it on its own.\nMAX_EXCERPT_CHARACTERS = 200",
+          "excerpt_sha": "982c038553f666ab",
+          "relevance": "CONTEXT_CHARACTER_BUDGET and MAX_EXCERPT_CHARACTERS define the window and per-excerpt bounds, with the rationale that one document cannot dominate or overflow.",
+          "link_confidence": "exact",
+          "session_id": null,
+          "tool_sequence": []
+        },
+        {
+          "kind": "code",
+          "source_path": "retrieval/context.py:21",
+          "title": "retrieval/context.py:21",
+          "body": "def excerpt_for(document: Document) -> str:\n    \"\"\"Return the bounded excerpt used to represent a document in results.\"\"\"\n    return document.text[:MAX_EXCERPT_CHARACTERS]",
+          "excerpt_sha": "38be12b68e87e2fb",
+          "relevance": "excerpt_for clamps a document's representation to MAX_EXCERPT_CHARACTERS, the same cap packing accounts for.",
+          "link_confidence": "exact",
+          "session_id": null,
+          "tool_sequence": []
+        },
+        {
+          "kind": "code",
+          "source_path": "retrieval/context.py:26",
+          "title": "retrieval/context.py:26",
+          "body": "def pack_context(\n    documents: list[Document],\n    *,\n    char_budget: int = CONTEXT_CHARACTER_BUDGET,\n    max_excerpt: int = MAX_EXCERPT_CHARACTERS,\n) -> list[Document]:\n    \"\"\"Select the rank-ordered prefix of ``documents`` that fits the budget.\n\n    ``documents`` is expected to already be in reranked order. Each document\n    contributes at most ``max_excerpt`` characters to the running total, and\n    packing stops at the first document that would push the total past\n    ``char_budget``.\n    \"\"\"\n    packed: list[Document] = []\n    used = 0\n    for document in documents:\n        cost = min(len(document.text), max_excerpt)\n        if used + cost > char_budget:\n            break\n        packed.append(document)\n        used += cost\n    return packed",
+          "excerpt_sha": "d5514d09ca380dbb",
+          "relevance": "pack_context implements the bounded, rank-ordered-prefix packing with first-overflow early stop.",
+          "link_confidence": "exact",
+          "session_id": null,
+          "tool_sequence": []
+        }
+      ]
+    }
+  ]
+}

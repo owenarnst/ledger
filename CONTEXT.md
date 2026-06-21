@@ -32,6 +32,21 @@ The coding-agent harness that authored a trace — currently **Claude Code** or 
 **Provider adapter**:
 The ingestion component that normalizes one Provider's local session logs into Ledger Evidence records. The application layer is provider-blind; only adapters are provider-specific.
 
+**Topic Analyst**:
+The Claude Code harness that investigates an enrolled repository and its normalized traces to construct the ordered **worklist**. It starts from deterministically indexed Evidence, uses scoped read-only repository tools (`Read`, `Grep`, `Glob`) to find and connect supporting context, and emits structured Topic proposals with source locators and link confidence. It may interpret and prioritize; it may not mutate the repository or turn an uncited claim into Evidence.
+
+**Worklist**:
+The current ordered projection of a Project's active **Topics** — a read model recomputed each analysis run, never a list the analyst appends rows into.
+_Avoid_: backlog, queue (both imply direct insertion; the Worklist is a projection over the ledger).
+
+**Worklist snapshot**:
+The immutable, ordered output of one ranking pass for a given context (cwd / branch / path) — the **Worklist** as shown at one moment. A **Topic** missing from a snapshot is *unsurfaced for that context*, not removed from the ledger.
+_Avoid_: equating snapshot-absence with **Retire** (one is relevance filtering, the other is the lifecycle exit).
+
+**Retire**:
+The explicit lifecycle exit that removes a **Topic** from the active **Worklist** while preserving its history; a Topic leaves only by Retire, never by being omitted from an analysis run.
+_Avoid_: delete, archive (Retire never destroys revisions, Checks, or reflections).
+
 **Coach**:
 The restricted assistant that explains concepts/goals and asks diagnostic questions but never returns a patch. Runs Claude-only (`claude -p`, all tools denied); see ADR-0001.
 
@@ -54,7 +69,10 @@ _Avoid_: anchoring on a tuned magic number (a threshold's "why" is "I tried valu
 - A **Project** contains many **Topics**; a **Topic** has many revisions.
 - A **Check** targets exactly one Topic revision; an **Attempt** belongs to one Check.
 - A **Topic** is grounded in **Evidence**; conversation Evidence comes from a **Provider** via that Provider's **Provider adapter**.
-- Ranking = a gate (load-bearing ∧ untrailed) then **Blast radius** + **Ownership thinness**; **AI-authorship** boosts, never gates.
+- The **Topic Analyst** discovers and interprets supporting Evidence and proposes the ordered worklist; deterministic code verifies its source locators, hashes the selected records, and persists accepted Topic revisions.
+- The **Topic Analyst** proposes worklist membership and order from grounded **Blast radius**, **Ownership thinness**, current relevance, and trail evidence; deterministic lifecycle facts constrain the proposal, and **AI-authorship** may boost but never gate.
+- The **Worklist** is the projection over active **Topics**; a Topic enters by an analyst `create`, is refreshed by `update`, and leaves only by **Retire** — by an explicit, verified operation, never because a run omitted it.
+- A **Topic** has three distinct absences, never conflated: *absent from a **Worklist snapshot*** (not surfaced for this context), *active but unsurfaced everywhere* (still in the ledger, still checkable), and *Retired* (the only exit from active status).
 - **Concepts** are derived from multiple Topics and always retain links back to them.
 - A **Topic**'s **Receipt** renders the conversation **Evidence** for its **Decision anchor**; **AI-authorship** is read off the Receipt. The Receipt is provenance display only — never a validation input.
 
@@ -67,4 +85,5 @@ _Avoid_: anchoring on a tuned magic number (a threshold's "why" is "I tried valu
 
 - **"load-bearing"** was used to mean high-fan-in *symbol*; resolved — it means a defendable *decision* (an early build that ranked by raw fan-in surfaced trivia).
 - **"engagement"** (transcript-engagement classification) is a dead signal that failed validation; it is never an input to Ownership thinness or to any Provider judgement. Use **AI-authorship** (a binary provenance fact) instead.
-- **"support both providers"** (this event) means **ingestion** parity + provider-labeled provenance; the **Coach** and the live session nudge run on **Claude Code only**. See ADR-0001.
+- **"support both providers"** (this event) means **ingestion** parity + provider-labeled provenance; the **Topic Analyst**, **Coach**, and live session nudge run on **Claude Code only**. See ADR-0001 and ADR-0002.
+- **"Topic identity"** was keyed in code on `file:symbol`, but a **Topic** is defined to *survive renames and rewrites*; resolved — identity is anchored to the verified primary **Decision anchor** (rename- and edit-robust, distinct from the per-edit excerpt fingerprint that drives revisions), the analyst proposes `create`/`update`/**Retire** against stable IDs, and deterministic code owns the match. See the forthcoming reconciliation-lifecycle ADR.

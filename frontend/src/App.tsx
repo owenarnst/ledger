@@ -18,9 +18,10 @@ interface RailProps {
   projectName: string
   topicCount: number
   readyCount: number
+  isDemo?: boolean
 }
 
-function Rail({ projectName, topicCount, readyCount }: RailProps) {
+function Rail({ projectName, topicCount, readyCount, isDemo }: RailProps) {
   const label = () => ({
     fontFamily: mono,
     fontSize: 10.5,
@@ -46,7 +47,24 @@ function Rail({ projectName, topicCount, readyCount }: RailProps) {
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 10px', borderRadius: 8, background: 'var(--panel2)', border: '1px solid var(--bd2)' }}>
           <div style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)', marginTop: 6, flex: 'none' }} />
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 500, fontSize: 13.5 }}>{projectName || '—'}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <span style={{ fontWeight: 500, fontSize: 13.5 }}>{projectName || '—'}</span>
+              {isDemo && (
+                <span
+                  style={{
+                    fontFamily: mono,
+                    fontSize: 9,
+                    letterSpacing: '0.08em',
+                    color: 'var(--faint)',
+                    border: '1px solid var(--bd2)',
+                    borderRadius: 4,
+                    padding: '1px 5px',
+                  }}
+                >
+                  DEMO
+                </span>
+              )}
+            </div>
             <div style={{ fontSize: 11.5, color: 'var(--mut)', marginTop: 2 }}>
               {topicCount} topics · {readyLabel}
             </div>
@@ -76,10 +94,11 @@ function Rail({ projectName, topicCount, readyCount }: RailProps) {
             <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.3" />
             <path d="M8 5.2v3.4M8 10.6h.01" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
           </svg>
-          AUTO-DISCOVERY
+          HOW LEDGER SEES THIS REPO
         </div>
         <div style={{ fontSize: 12, color: 'var(--mut)', lineHeight: 1.5 }}>
-          Decisions appear here automatically from the Codex and Claude Code logs already on your machine.
+          Ledger reads the Codex and Claude Code logs already on your machine to record what your agents touched.
+          Turning that activity into ranked decisions is curated today — automatic discovery is on the roadmap.
         </div>
       </div>
     </aside>
@@ -194,14 +213,19 @@ export default function App() {
     codeRef.current = code
   }, [code])
 
-  // initial load: project + topics
+  // initial load: pick one project and show only its worklist. A real enrolled
+  // repo wins over the disclosed demo so the rail and the worklist always agree
+  // on which project is in view (there is no project switcher yet).
   useEffect(() => {
     let alive = true
     ;(async () => {
       try {
-        const [projects, topics] = await Promise.all([api.listProjects(), api.listTopics()])
+        const projects = await api.listProjects()
+        const chosen = projects.find((p) => !p.is_demo) || projects[0] || null
         if (!alive) return
-        setProject(projects[0] || null)
+        setProject(chosen)
+        const topics = chosen ? await api.listProjectTopics(chosen.slug) : []
+        if (!alive) return
         setCards(toCards(topics))
       } catch (e) {
         if (alive) setLoadError(e instanceof Error ? e.message : String(e))
@@ -531,7 +555,9 @@ export default function App() {
   )
 
   // ---- derive ----
-  const readyCount = cards.filter((c) => isActionable(c.raw.state)).length
+  // A check is "ready" only when the Topic both wants one and has a recipe —
+  // the same rule the backend's SessionStart nudge counts.
+  const readyCount = cards.filter((c) => isActionable(c.raw.state) && !!c.raw.checkable).length
   const projectName = project?.name || ''
   const heroPracticed = topicDetail?.state === 'practiced'
   const showRail = screen !== 'workspace'
@@ -545,7 +571,7 @@ export default function App() {
 
   return (
     <div style={{ height: '100vh', width: '100%', display: 'flex', overflow: 'hidden', background: 'var(--bg)', color: 'var(--tx)' }}>
-      {showRail && <Rail projectName={projectName} topicCount={cards.length} readyCount={readyCount} />}
+      {showRail && <Rail projectName={projectName} topicCount={cards.length} readyCount={readyCount} isDemo={!!project?.is_demo} />}
 
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <TopBar projectName={projectName} crumbTopic={crumbTopic} isWorkspace={screen === 'workspace'} statsLabel={statsLabel} onExit={exitCheck} />

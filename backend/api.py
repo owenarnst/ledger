@@ -72,6 +72,10 @@ class ResetRequest(BaseModel):
     spool_dir: str | None = None
 
 
+class ExtractRequest(BaseModel):
+    repo_path: str
+
+
 def create_app(
     db_path: Path = DEFAULT_DB_PATH,
     sandbox_root: Path = DEFAULT_SANDBOX_ROOT,
@@ -119,9 +123,23 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.post("/api/extract")
+    def extract_topics(payload: ExtractRequest) -> dict:
+        try:
+            return repo.extract_or_refresh_topics(payload.repo_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/api/projects/{project_slug}/topics")
     def list_topics(project_slug: str) -> list[dict]:
         return repo.list_topics(project_slug)
+
+    @app.get("/api/projects/{project_slug}/analysis")
+    def analysis_status(project_slug: str) -> dict:
+        try:
+            return repo.get_analysis_status(project_slug)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="project not found") from exc
 
     @app.get("/api/topics/{topic_id}")
     def get_topic(topic_id: str) -> dict:

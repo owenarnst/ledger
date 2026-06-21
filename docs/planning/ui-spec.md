@@ -33,15 +33,15 @@ _Consequence flagged:_ the canonical spec bills just-in-time as *the* differenti
 
 Single-project-at-a-time SPA. **Three real screens**, minimal routing:
 
-1. **Dashboard** — the selected project's ranked Topic worklist + "why the top one was selected."
-2. **Topic page** — the *artifact card* (three panes: Code reality / Claude receipt / Missing reasoning) **and** the post-check practice history are **one screen in two states**, not two screens. Pre-check: three-pane card + "Start check." Post-check: same page gains a practice-history section.
+1. **Dashboard** — the selected project's ordered Topic worklist.
+2. **Topic page** — the expanded view of one worklist item and its post-check ownership history. Pre-check: grounded Topic detail + "Start check." Post-check: the same page gains practice history.
 3. **Check workspace** — three panes (Task / Sandbox / Coach). The only full-bleed layout.
 
 Folded away (not separate screens):
 - **Reflection** — **CUT (2026-06-19)**, see the Reflection section. After green → persist → Topic page history directly.
 - **Vision preview** (Learning preview) = a static, narrate-only panel, not a routed screen.
 
-Demo flow: topic row → Topic page → "Start check" → Check workspace → (reflection) → back to Topic page (now with history).
+Demo flow: topic row → Topic page → "Start check" → Check workspace → back to Topic page (now with history).
 
 ## Multi-project navigation — LOCKED (2026-06-19)
 
@@ -53,45 +53,83 @@ Demo flow: topic row → Topic page → "Start check" → Check workspace → (r
 - Honest framing: *"Ledger auto-tracks any repo you work in — here's the one I've been in,"* never *"we seeded N projects."*
 - **Rejected:** aggregate cross-repo "home" with global ranking (implies cross-project ranking the product parks as vision); openable seeded secondary dashboards (fake population).
 
-## Dashboard — LOCKED (2026-06-19)
+## Dashboard — LOCKED (2026-06-20)
 
 ### Ranking model
-No displayed score (guardrail: no aggregate ownership score, `Ledger.md:136`). Order is computed from the factors; the UI shows the ordered list + signal chips + a plain-language "why #1," never a number.
-- **Gate (to be a Topic at all):** load-bearing decision ∧ **untrailed** (weak reasoning trail).
-- **Axis 1 — Blast radius** (static): centrality + risk-class. "Does it matter."
-- **Axis 2 — Ownership thinness** (personal/dynamic): decay state `never checked → practiced → code changed since → revisit due`, boosted by **AI-authorship**. "Do *you* own it." Keeps Ledger from being a linter; carries the memory beat (code-changed re-surfaces to the top).
+No displayed score (guardrail: no aggregate ownership score). The Claude Code Topic Analyst proposes worklist membership and order from verified Evidence; deterministic lifecycle facts constrain the result. The dashboard renders that order without exposing the analyst's detailed reasoning on each row.
 
 ### Layout
-Ranked **worklist** (ordered list of Topics), strict global rank (no sectioning — JIT removed). Each row:
-- topic title (maintenance-obligation phrase);
-- **state badge** (`Check recommended · In progress · Practiced · Code changed since practice · Revisit due`);
-- **signal chips** — `blast radius: N callers` · `risk: <class>` · `Claude-authored`;
-- **rank #1 expanded by default** into a one-sentence "why selected" naming the signals — stages the demo beat.
-The memory beat rides the list: the re-surfaced topic sits near the top in `Code changed since practice → Revisit due`.
+The **worklist** is an ordered list of compact Topic rows. Every row contains exactly four information fields:
+
+1. **Topic title** — a durable maintenance-obligation phrase, not a symbol or function name.
+2. **Ownership status** — one lifecycle state, such as `Check recommended`, `In progress`, `Practiced`, `Code changed since practice`, or `Revisit suggested`.
+3. **Evidence summary** — a compact summary of verified grounding, such as `3 code anchors · 2 related Claude sessions`. Detailed excerpts, source locators, and confidence belong in the Topic page.
+4. **Impact level** — a plain `High`, `Medium`, or `Low` label. Do not expose an opaque numeric score.
+
+The row itself is the single interaction and opens the Topic page. Do not render a separate `Open` button. Do not place `Start check` in the worklist; that action belongs on the expanded Topic page.
+
+Do not render code excerpts, invariants, detailed evidence, source paths, confidence explanations, rank rationale, or a collection of signal chips in the worklist row. Those details belong in the expanded view specified below.
+
+### Worklist issue acceptance criteria — LOCKED (2026-06-20)
+
+- The dashboard renders analyst-provided Topics in their supplied order.
+- Each worklist row displays only the Topic title, ownership status, evidence summary, and impact level.
+- The Topic title describes the maintenance obligation and does not fall back to a raw symbol name.
+- Impact is rendered as `High`, `Medium`, or `Low`; no numeric score is visible.
+- Clicking or keyboard-activating anywhere on a row navigates to that Topic's expanded view.
+- No `Open` or `Start check` button appears in a worklist row.
+- Detailed supporting Evidence and the `Start check` action remain absent from the worklist.
 
 _Pitch line (recovers the Claude-native angle JIT was carrying):_ **"Ledger ranks up the load-bearing decisions Claude wrote that you never documented and have never proven you can operate."** The receipt does double duty — demo asset + ranking signal. (AI-authorship = **booster, not gate**: human-authored untrailed decisions are still Topics; Claude-authored ones rank higher.)
 
-## Topic page (artifact card) — LOCKED (2026-06-19)
+## Topic page (expanded worklist item) — LOCKED (2026-06-20)
 
-One screen, two states (per inventory). Primary target: **laptop desktop**; collapses to vertical stack on narrow/projector.
+One screen, two states (per inventory). Its job is to answer four questions: **what do I need to own, why does it matter, what Evidence supports this Topic, and what should I do next?** Primary target: laptop desktop; collapse to a vertical flow on narrow screens.
 
 ### Header
-Topic title + **state badge** + framing headline **"Ownership check recommended"** (never "you don't understand," `Ledger.md:167`) + primary **"Start check"** CTA.
+Show the Topic title, ownership-status badge, and impact level. The primary action is **Start check** before first practice and **Practice again** afterward. Never frame the state as "you don't understand."
 
-### Body — 2 columns (not 3 equal)
-- **Left, dominant — Code reality:** the decision snippet + *why it's load-bearing* (blast-radius signals: "retrieval path · 5 callers · tenant isolation"). Code gets the width.
-- **Right, stacked:**
-  - **Claude receipt** (top) — real transcript snippet + tool-call provenance (`Read cache.py → Edit cache.py → Bash pytest`); AI-authorship made visible.
-  - **Missing reasoning** (bottom) — what Ledger searched (ADRs, CONTEXT, README, commit msg) and didn't find. Grounded, not preachy.
+### What you need to own
+Show the Topic's maintenance obligation or invariant in plain language. This is the concise behavioral rule the maintainer must preserve, not a function description or implementation walkthrough.
+
+### Why it matters
+Explain the consequence of violating the obligation and why the impact level is justified. Keep the impact label categorical (`High`, `Medium`, or `Low`) and do not display a numeric score.
+
+### Supporting Evidence
+Use a provider-neutral, progressively disclosed Evidence section rather than fixed provider panes. Group supporting records into:
+
+- **Code anchors** — count plus repository-relative path, symbol/location, and a short relevance statement.
+- **Development traces** — count plus Provider, session identity/time, and a short explanation of how the trace relates to the Topic.
+
+Each Evidence row is collapsed by default. Activating it reveals the exact excerpt, durable source locator, and link confidence. Full raw traces and analyst internals are not shown by default.
+
+Do **not** include a reasoning-trail or missing-reasoning section in the expanded view.
+
+### Ownership history
+Show the current ownership state in context: last practice time, whether code changed afterward, run count, elapsed time, and whether conceptual help was used. Before the first completed Check, render a concise empty state rather than an empty table.
 
 ### Hand-off rule
-The topic page shows only grounding/why — it **never reveals the mutation or upcoming defect** (that's in the workspace; revealing it leaks the exercise). "Start check" is the hand-off.
+The Topic page shows grounding and ownership context only. It never reveals the mutation, intended patch, or upcoming defect. **Start check** is the hand-off to the Check workspace.
 
 ### Post-check state (same screen)
-Below the panes, a **Practice history** section appears after first completion: behavior restored (y/n) · elapsed · check runs · conceptual help used · **direct solution given: no** · code snapshot (`Ledger.md:149`). Header CTA flips "Start check" → "Practice again"; state badge updates.
+After first completion, practice history records behavior restored, elapsed time, check runs, conceptual help used, direct solution given (`no`), and the practiced code snapshot. The header action changes from **Start check** to **Practice again**, and the ownership status updates.
 
 ### Responsive
-Laptop (primary) = dominant-left + stacked-right. Narrow/projector = vertical stack (Code → Receipt → Missing). Build desktop first.
+Preserve the semantic order on every viewport: header → what you need to own → why it matters → supporting Evidence → ownership history. Build desktop first.
+
+### Expanded-view issue acceptance criteria — LOCKED (2026-06-20)
+
+- Opening a worklist row navigates to the corresponding expanded Topic page.
+- The header displays Topic title, ownership status, impact level, and the appropriate Check action.
+- **What you need to own** displays the maintenance obligation or invariant.
+- **Why it matters** explains the failure consequence and categorical impact without a numeric score.
+- **Supporting Evidence** contains separate Code anchors and Development traces groups with counts.
+- Evidence rows show source/location and relevance while collapsed, then reveal the exact excerpt, source locator, and link confidence when activated.
+- Evidence presentation is Provider-neutral; traces carry their actual Provider label.
+- No reasoning-trail or missing-reasoning section is rendered.
+- Ownership history displays prior practice facts and whether code changed afterward, with a concise first-practice empty state.
+- The page never reveals the mutation, intended patch, or upcoming defect.
+- **Start check** opens the Check workspace; after a completed Check it becomes **Practice again**.
 
 ## Check workspace — LOCKED (2026-06-19)
 

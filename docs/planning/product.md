@@ -39,9 +39,9 @@ Owen already has **`/ensure-understanding`** — a Claude Code skill that runs t
 - **It's pull, point-in-time, artifact-scoped.** You bring it the thing. It can't tell you *which* decisions across your whole repo deserve a check — the ones you don't know you don't know. **Ledger does the selection.**
 - **It's stateless.** No homework, no tracking decay across PRs. **Ledger is the memory.**
 
-**The product, precisely: Ledger allocates a finite understanding budget.** Nobody can deeply own their entire codebase; checking evenly is waste. Ledger keeps a running, decaying ledger of where ownership is thin *on the things that matter*, and surfaces the highest-leverage gaps in priority order. The output is a **prioritized, decaying worklist**, not an even audit.
+**The product, precisely: Ledger allocates a finite understanding budget.** Nobody can deeply own their entire codebase; checking evenly is waste. Ledger keeps a running, decaying ledger of where ownership is thin *on the things that matter*, and surfaces the highest-leverage gaps in priority order. The output is a **prioritized, decaying worklist**, not an even audit. Claude Code constructs that worklist from repository and trace Evidence; Ledger deterministically verifies and persists the grounding behind each item.
 
-**Ranking is the core IP (not detection).** Rank at display time, because priority depends on current work. First gate out trivia, stale topics, and candidates without a credible exercise; then prioritize: **previous struggle + code changed** → **unchecked + relevant to the current path** → **high-risk + weak trail** → **time-based revisit** → background backlog. Within a tier, use centrality / blast-radius, risk-class (auth, persistence, migrations, anything irreversible), reasoning-trail strength, prior attempts / coach use, and exercise quality. The strongest signal is **relevance to what you're about to touch (just-in-time):** a `SessionStart` hook reads `cwd`/branch and surfaces debt *on the path you're entering*.
+**Ranking is the core IP (not detection).** The Topic Analyst proposes order at display time because priority depends on current work, while deterministic lifecycle facts constrain what can be shown. It first cuts trivia, stale topics, and candidates without credible grounding, then weighs: **previous struggle + code changed** → **unchecked + relevant to the current path** → **high-risk + weak trail** → **time-based revisit** → background backlog. Other grounded inputs include centrality / blast-radius, risk-class (auth, persistence, migrations, anything irreversible), prior attempts / coach use, and exercise quality. The strongest signal is **relevance to what you're about to touch (just-in-time):** a `SessionStart` hook reads `cwd`/branch and asks for debt *on the path you're entering*.
 
 **Never ask the user to trust an opaque score.** The card must state why the topic is ranked now: *"You're entering this path; this isolation decision has never been practiced; no rationale was found."* Avoid an aggregate ownership score in both the ranker and the UI.
 
@@ -49,7 +49,7 @@ Owen already has **`/ensure-understanding`** — a Claude Code skill that runs t
 
 ## The concept unit — load-bearing decision point → topic
 
-**Unit:** a deterministically-extractable code artifact that **encodes a choice** a future maintainer needs the *why* of to change the system safely. The unit is really the **maintenance obligation**; the artifact is just where it shows up.
+**Unit:** a repository-specific maintenance obligation, identified by the Topic Analyst and grounded in one or more exact code artifacts that **encode a choice** a future maintainer needs the *why* of to change the system safely. Deterministic scanning supplies candidate anchors and searchable context; it does not decide that an anchor is a Topic.
 
 **The flag:** `load-bearing decision × weak reasoning trail (absent from ADRs + CONTEXT + comments + PR/commit messages)`.
 
@@ -73,11 +73,11 @@ Project
 
 ```text
 All Git commits + code/tests/docs + Claude receipts
-  → immutable evidence records
-  → deterministic decision-anchor extraction
-  → bounded LLM labeling (never free-scan / sole-detect)
+  → deterministic lossless ingestion + searchable indexes
+  → Claude Code Topic Analyst investigates with scoped Read/Grep/Glob
+  → structured, ordered Topic proposals with source locators + confidence
+  → deterministic citation verification + immutable evidence records
   → create, revise, merge, split, supersede, retire, or reject topic
-  → context-sensitive ranking
   → Debug-to-Own check
   → attempts + coach use + reflection
   → ownership event
@@ -86,7 +86,9 @@ All Git commits + code/tests/docs + Claude receipts
 
 **Ingest every commit in an enrolled repository, not only "Claude commits."** Git is the reality stream; Claude sessions are a separate provenance stream. A human commit can invalidate a tracked decision, and Claude attribution is inherently fuzzy because Claude edits files while the user usually creates the commit. A fast `post-commit` hook records local changes; `SessionStart` reconciles stored HEAD against current HEAD to catch pulls, rebases, rewritten history, and missed hooks. Always check changed files against tracked anchors; reserve broader extraction for Claude-touched files, high-risk paths, and scheduled scans.
 
-For each deterministic candidate, construct an evidence bundle: exact code snapshot (commit + blob + path + symbol/span), callers/tests/risk signals, docs/comments/ADR/commit-message search, and related Claude receipts. The LLM labels only this bounded bundle: the encoded choice, maintenance obligation, invariant, failure mode, load-bearing rationale, trivia verdict, and possible narrow exercise. Every output cites evidence IDs; the LLM never invents a topic from conversation alone.
+Deterministic extraction is a recall-oriented starting point, not the worklist gate. It indexes candidate anchors, commits, callers, tests, docs, comments, and normalized Provider traces. The **Claude Code Topic Analyst** then uses scoped read-only tools (`Read`, `Grep`, `Glob`) to investigate that material, find supporting evidence, combine several anchors into one durable Topic, discard syntactic trivia, and order the worklist. Each proposal includes the maintenance obligation, invariant, risk and priority explanation, supporting source locators, and link confidence.
+
+Discovery and verification are separate. Claude may find and interpret Evidence; deterministic code resolves every cited session/commit/path/span against the indexed source, rejects stale or unsupported citations, hashes accepted excerpts, and persists the resulting Topic revision. No active Topic exists without verified code grounding. The analyst may report that it found no rationale in its searched scope, but absence is never promoted into an uncaveated repository fact.
 
 **Topic identity is stable; revisions are immutable.** A rename may keep the same topic. An implementation rewrite with the same invariant creates a new revision. A materially different obligation may split or supersede the topic. Removal retires it without deleting history. Checks and reflections remain attached to the exact revision practiced; evidence never silently transfers to materially changed code.
 
@@ -114,7 +116,9 @@ A throwaway run (four decision-targeted mutants on a real Claude-authored token-
 
 ### Where the LLM sits
 
-Deterministic extraction *detects* candidates; the **LLM proposes labels** ("what decision does this encode? load-bearing or trivia?") and **proposes the mutant** (which line to break, how). It is never the sole detector or ranker, and it never decides pass/fail — explicit evidence gates and the test do. Treat mutant generation as a **quality-gated** step (sanity-check it actually changes behavior and isn't equivalent), not a fire-and-forget call.
+The **Claude Code Topic Analyst** owns semantic discovery and worklist construction: what maintenance obligations exist, which anchors and traces support them, what is load-bearing versus trivia, and what deserves attention first. This is intentionally agentic repository analysis, not cosmetic labeling of pre-approved anchors. The harness may use `Read`, `Grep`, and `Glob`; it may not edit the repository, run arbitrary commands, access the web, or cite material Ledger cannot resolve.
+
+Deterministic code owns lossless ingestion, source indexing, citation verification, immutable persistence, revision identity, and lifecycle constraints. The LLM may also propose a mutant, but it never decides checkability or pass/fail: baseline-green → mutant-red and the test exit code remain empirical gates. Treat mutant generation as a quality-gated step, not a fire-and-forget call.
 
 ## The coach's boundary
 
@@ -129,7 +133,9 @@ The coach is core because the study's strongest result is not "avoid AI" — it'
 
 **The best defense against leaking the answer is not the system prompt — it's withholding the answer from the model.** Architecturally, the coach must **not** receive: the original unmutated implementation, the mutation diff, the intended patch, or the target line. Give it only the sandbox, failure evidence, and topic description. For the demo, constrain responses to structured fields (`Concept` / `Diagnostic question` / `Suggested observation`) and **reject code blocks/patches in the response layer.**
 
-**The coach runs on the user's own Claude Code CLI, not the Anthropic API** (headless `claude -p`, coach policy via `--append-system-prompt`, all tools denied). Two payoffs: (1) **adoptability** — no API key to manage, no per-token cost; it rides the user's existing Claude Code auth and their chosen model; and (2) **withholding becomes an enforced permission boundary** — with Read/Bash denied, the coach *cannot* open the sandbox files or original code even if it tried, not just "we didn't put it in the prompt." It also makes Ledger **Claude-Code-native on both halves** — hooks for ingestion, the CLI for coaching.
+**The coach runs on the user's own Claude Code CLI, not the Anthropic API** (headless `claude -p`, coach policy via `--append-system-prompt`, all tools denied). Two payoffs: (1) **adoptability** — no API key to manage, no per-token cost; it rides the user's existing Claude Code auth and their chosen model; and (2) **withholding becomes an enforced permission boundary** — with Read/Bash denied, the coach *cannot* open the sandbox files or original code even if it tried, not just "we didn't put it in the prompt."
+
+The Coach and Topic Analyst deliberately have different tool boundaries. The Topic Analyst needs scoped `Read`/`Grep`/`Glob` access because finding grounded context is its job; the Coach is denied those tools because discovering the withheld solution would violate the exercise. Both ride the local Claude Code harness, but only the analyst may investigate repository and trace Evidence.
 
 ## Product surface — persistent local app, not a CLI interrogation
 
@@ -216,16 +222,21 @@ The signal lives in the **join** of three sources:
 - **Docs / ADRs / CONTEXT / comments** = the reasoning trail — whether the *why* was captured; the "weak trail" half. *(Validation depends on this.)*
 - **Transcript** = the receipt — whether Claude was involved. *(Validation does NOT depend on this.)*
 
-Every topic card must answer five inspectable questions: **what exists** (exact code/commit), **why it matters** (risk/invariant/blast radius), **where it came from** (conversation receipt when available), **what reasoning is missing** (a persisted trail-scan receipt, not a naked claim), and **why now** (the ranker's current trigger). Conversation is optional supporting evidence; no active topic exists without exact code grounding.
+Every expanded Topic view must answer four inspectable questions: **what must be owned** (the maintenance obligation/invariant), **why it matters** (failure consequence and impact), **what supports it** (verified code anchors and development traces), and **what to do next** (ownership history plus the Check action). Conversation is optional supporting evidence; no active Topic exists without exact code grounding.
 
-**Keep the transcript out of validation, on purpose:** diff↔session linking is fuzzy (Claude Code gives `cwd` + timestamps + which *file* was touched, not "this decision was made here"), and "engagement: low/med/high" is exactly the signal that failed Gate B. Store links as `exact`, `heuristic`, or `hand_verified`; say *"related session"* rather than imply causality when uncertain. **But provenance is a strong demo asset:** build **one hand-verified real evidence chain** (actual code + a real transcript snippet where Claude edited that file + the genuinely-missing ADR). *"The core signal is proven without needing to guess what Claude did; provenance is what makes it Claude-Code-native."* **Do not build the automated diff↔session linker** — off the critical path, fuzzy, unneeded for the demo.
+**Keep the transcript out of validation, on purpose:** diff↔session linking is fuzzy (Claude Code gives `cwd` + timestamps + which *file* was touched, not "this decision was made here"), and "engagement: low/med/high" is exactly the signal that failed Gate B. The Topic Analyst may discover a related trace and propose the connection, but Ledger stores it as `exact`, `heuristic`, or `hand_verified`; say *"related session"* rather than imply causality when uncertain. **But provenance is a strong demo asset:** build **one hand-verified real evidence chain** (actual code + a real transcript snippet where Claude edited that file + the genuinely-missing ADR). *"The core signal is proven without needing to guess what Claude did; provenance is what makes it Claude-Code-native."* Do not create a deterministic linker that promotes a timestamp/path match into exact authorship.
 
-## The artifact card (the product in one screen)
+## The expanded Topic view
 
-Three panes, each grounded in something real:
-1. **Code reality** — the actual load-bearing decision, with *why it's load-bearing* ("on the retrieval path, called by 5 files").
-2. **Claude receipt** — a real transcript snippet + tool-call provenance (`Read rerank.py → Edit rerank.py → Bash pytest`). The Claude-Code-native beat Anthropic appreciates.
-3. **Missing reasoning** — what Ledger searched (ADRs, CONTEXT, README, commit msg) and didn't find. The moment the flag feels grounded, not preachy.
+The worklist row opens a provider-neutral detail page containing:
+
+1. **What you need to own** — the maintenance obligation or invariant in plain language.
+2. **Why it matters** — the failure consequence and grounded categorical impact (`High`, `Medium`, or `Low`).
+3. **Supporting Evidence** — progressively disclosed Code anchors and Development traces. Collapsed rows show source/location and relevance; expanded rows show exact excerpts, durable locators, and link confidence.
+4. **Ownership history** — prior practice, code changes since practice, runs, elapsed time, and conceptual help.
+5. **Next action** — `Start check`, changing to `Practice again` after completion.
+
+Do not render a reasoning-trail or missing-reasoning section. Do not reveal the mutation, intended patch, or upcoming defect before the Check starts. The interaction-level source of truth and issue acceptance criteria live in `docs/planning/ui-spec.md`.
 
 The core UI move: **"Ownership check recommended," never "you don't understand."** Infer *"this deserves a check"* from silence — modest, professional, hard to argue with. Only the **check result** turns a candidate into confirmed debt; Ledger never asserts the gap, it *tests* for it.
 
@@ -327,7 +338,7 @@ Secondary sources (color, **not** the anchor — don't over-cite to judges): "I'
 The convincing vertical slice (full hour-by-hour plan in **[[Ledger — 24-Hour Solo Build Plan]]**):
 
 1. Claude and Git hooks record activity for **one real repository**.
-2. The local web app shows that one project + several seeded ownership topics.
+2. The local web app shows that one project + several Claude-generated, citation-verified ownership topics.
 3. One topic is grounded in real code, commit, and session evidence.
 4. Starting its check creates a real temporary sandbox with a curated mutation.
 5. The browser lets the user edit one file and run a real test.
@@ -342,9 +353,9 @@ The convincing vertical slice (full hour-by-hour plan in **[[Ledger — 24-Hour 
 - **The grill, as the "rationale" prong.** Debug-to-Own carries "can you operate it" (deterministic). The grill — *"why this approach over the alternatives"* — is the *rationale* prong a bug-fix can't reach, and `/ensure-understanding` already implements it. **Demoted to narration**, not built into the hackathon flow; it's the portfolio's second verifier, not the live one.
 - **Longitudinal / decay / verify-by-absence** — the over-time moat: did your dependence on the AI for this *actually drop* in later real work. The sandbox check is the point-in-time verifier; verify-by-absence is the over-time one. Narrate; show one seeded-but-real memory beat.
 - **LLM-generated mutants (Meta-style) + ephemeral per-commit sandboxes** — the same trap class as the provenance linker; narrate, don't build.
-- **Automatic topic/mutant generation, arbitrary-repo sandboxing, cross-project learning plans, calibrated ownership scoring** — vision slides.
+- **Generalized multi-repository topic analysis, automatic mutant generation, arbitrary-repo sandboxing, cross-project learning plans, calibrated ownership scoring** — vision slides.
 - **Spaced-repetition export (Anki/AnkiConnect)** for the conceptual-recall slice — *describe* as productization; **do not integrate live** (invisible plumbing + forces a judge to have Anki installed). Build the in-context loop yourself.
-- **Broad provider-agnostic** (Cursor/Copilot/ChatGPT/Gemini) stays the TAM/north-star slide, and **Coach/nudge parity across providers stays roadmap.** _Exception, pulled into Saturday scope (a Codex-native partner joined):_ two-provider **ingestion** (Claude Code + Codex) via a `ProviderAdapter` interface + provider-labeled provenance, cheap to build/test on the partner's own real sessions. The Codex adapter is the vision-beat proof the abstraction is real; the **spine stays Claude-Code-native** — hero loop, `SessionStart` nudge, and Coach run on Claude only (the only zero-friction `SessionStart`+local-JSONL path; Codex has no `--disallowedTools` equivalent for the withholding Coach). "Support both providers" = **ingestion parity + provider-labeled provenance, not Coach/nudge parity.** Gated on an hour-0 Codex spike; see `docs/adr/0001-dual-provider-ingestion-claude-native-spine.md` and Log 2026-06-20.
+- **Broad provider-agnostic** (Cursor/Copilot/ChatGPT/Gemini) stays the TAM/north-star slide, and **Topic Analyst/Coach/nudge parity across providers stays roadmap.** _Exception, pulled into Saturday scope (a Codex-native partner joined):_ two-provider **ingestion** (Claude Code + Codex) via a `ProviderAdapter` interface + provider-labeled provenance, cheap to build/test on the partner's own real sessions. The Codex adapter is the vision-beat proof the abstraction is real; the **spine stays Claude-Code-native** — Topic Analyst, hero loop, `SessionStart` nudge, and Coach run on Claude only. "Support both providers" = **ingestion parity + provider-labeled provenance, not analysis/Coach/nudge parity.** Gated on an hour-0 Codex spike; see `docs/adr/0001-dual-provider-ingestion-claude-native-spine.md`, ADR-0002, and Log 2026-06-20.
 
 ## Design rationale carried over (don't re-derive)
 
@@ -356,6 +367,9 @@ The convincing vertical slice (full hour-by-hour plan in **[[Ledger — 24-Hour 
 ## Log
 
 > Dated entries, newest on top. (Pre-2026-06-19 detail lives in the archived design notes under `_archive/`.)
+
+### 2026-06-20 (Claude Topic Analyst owns worklist construction)
+Replaced the deterministic-extraction → bounded-labeling boundary with **agentic discovery → deterministic verification** (ADR-0002). Deterministic code now ingests and indexes repository/trace material for recall, verifies citations, and persists immutable Evidence. A Claude Code Topic Analyst uses scoped read-only `Read`/`Grep`/`Glob` access to find supporting Evidence, construct durable Topics, and order the worklist. This is distinct from the Coach, which continues to deny all tools so it cannot discover the withheld solution.
 
 ### 2026-06-20 (partner joined → dual-provider ingestion, Claude-native spine)
 A second, **Codex-native** engineer joined. Recorded in **ADR-0001**: pull a `ProviderAdapter` ingestion interface forward to day 1 with **two adapters** (Owen = Claude `~/.claude/projects/**/*.jsonl`; partner = Codex), **provider-labeled provenance** in the UI. The **spine stays Claude-native** — hero loop, `SessionStart` nudge, and Coach (`claude -p`, all tools denied); a multi-model coach stays roadmap because Codex exposes no `--disallowedTools` equivalent and the raw-API escape reintroduces the key/per-token cost the design killed. Codex ingestion + Codex nudge are **gated on an hour-0 feasibility spike** (does Codex persist local logs with tool-call granularity? does it expose a session-start hook?), mirroring the on-machine Claude-substrate check (2026-06-15 above). This **partially supersedes the "provider-agnostic = roadmap-only" bullet**: broad provider-agnostic stays north-star, but *ingestion* for two providers is now in scope. Work split into **vertical slices by provider**; tracked as GitHub issues in `owenarnst/ledger`. Same session: the **Receipt** (the provider-labeled provenance view; defined in `CONTEXT.md`) got disclosure **L1 + L2 committed, L3 raw-log as a stretch**, and the **Missing reasoning** card was **cut** (it required computing an *absence*, which can't be grounded honestly). _Still open: the "solo definition of done" framing below predates the partner — a separate reconciliation._
@@ -376,7 +390,7 @@ Spike confirmed the break-it/fix-it mechanic is feasible and demoable but that f
 Sharpest differentiation vs `/ensure-understanding`: the verifier was never the differentiator — **selection + memory** is. Ledger = a finite-attention allocator producing a prioritized, decaying worklist; ranking is the core IP; `SessionStart` just-in-time is the demo spine. "Load-bearing" sharpened to *defendable decision*, not high-fan-in *symbol*. Provenance model pinned (code=truth, docs=trail, transcript=receipt; transcript stays out of validation, is a demo asset via one hand-verified chain).
 
 ### 2026-06-17 (engagement test failed → pivot to code-ownership audit)
-The deciding engagement-classifier test failed Gate B. Rather than fall to CareOps, pivoted to the **silent-debt / code-ownership** signal: load-bearing code shipped with no reasoning trail. Concept unit = load-bearing decision point; architecture = deterministic extraction → LLM labels-never-detects → verifier.
+The deciding engagement-classifier test failed Gate B. Rather than fall to CareOps, pivoted to the **silent-debt / code-ownership** signal: load-bearing code shipped with no reasoning trail. Concept unit = load-bearing decision point; the architecture chosen here (`deterministic extraction → LLM labels-never-detects → verifier`) was superseded by ADR-0002 on 2026-06-20.
 
 ### 2026-06-15 (origin + signal-validation spike)
 Captured as a candidate (the first idea Owen had genuine conviction for). Memory-is-the-engine / anti-outsourcing-is-the-product line locked. Narrowed to local Claude Code transcripts for clean data + privacy. Throwaway prototype tested whether the offloading signal was real — result uncertain (delegation extractable; engagement under-determined by prompt-only data), which set up the 06-17 engagement test and its failure.

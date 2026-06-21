@@ -10,7 +10,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "httpx2>=0.28",
+    "httpx>=0.28",
     "pytest>=8.0",
 ]
 
@@ -19,7 +19,9 @@ packages = ["backend"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-backend = ["fixtures/hero_repo/**/*.py"]
+# Ship the whole hero-repo fixture tree (source, tests, pyproject, README) so a
+# packaged install can copy it into a demo sandbox and run its own test command.
+backend = ["fixtures/hero_repo/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]

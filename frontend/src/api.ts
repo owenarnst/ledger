@@ -35,6 +35,7 @@ const cid = (id: string) => encodeURIComponent(id)
 export interface Project {
   name: string
   slug: string
+  is_demo?: number
 }
 
 export interface Topic {
@@ -46,6 +47,9 @@ export interface Topic {
   claude_authored: boolean
   provider: string
   why_now?: string
+  // 1 when the backend has a curated check recipe for this Topic; only then is
+  // a Check offered (the backend refuses create_check otherwise).
+  checkable?: number
 }
 
 export interface TopicDetail extends Topic {
@@ -137,6 +141,7 @@ export interface Reflection {
 
 export const listProjects = () => req<Project[]>('/api/projects')
 export const listTopics = () => req<Topic[]>('/api/topics')
+export const listProjectTopics = (slug: string) => req<Topic[]>(`/api/projects/${cid(slug)}/topics`)
 export const getTopic = (id: string) => req<TopicDetail>(`/api/topics/${cid(id)}`)
 export const createCheck = (topicId: string, difficulty: Difficulty = 'hard') =>
   req<Check>(`/api/topics/${cid(topicId)}/checks`, { method: 'POST', body: { difficulty } })

@@ -14,7 +14,7 @@ Pull a **provider abstraction** forward to day 1, but keep the demo **spine** Cl
 
 - Ship a `ProviderAdapter` ingestion interface; the application layer stays provider-blind.
 - **Two ingestion adapters:** Owen owns Claude (`~/.claude/projects/**/*.jsonl`); the partner owns Codex. Provenance is **provider-labeled** in the UI (the existing `Claude-authored` chip generalizes to a provider tag).
-- The **hero loop, the live SessionStart nudge, and the Coach run on Claude Code only.** The Codex adapter is shown at the vision beat as proof the abstraction is real.
+- As amended by ADR-0002, the **Topic Analyst, hero loop, live SessionStart nudge, and Coach run on Claude Code only.** The Codex adapter is shown at the vision beat as proof the abstraction is real.
 - A **Codex / multi-model coach is deferred.** The Coach's defining property is enforced withholding via `--disallowedTools` (the model literally cannot read the sandbox or original code). Codex exposes no equivalent name-based tool-denial primitive, and the raw-API escape reintroduces the API-key + per-token cost the design explicitly killed.
 
 ## Gate
@@ -26,4 +26,4 @@ A partner **hour-0 feasibility spike** gates the Codex track, mirroring the on-m
 ## Consequences
 
 - `docs/planning/product.md:347` needs reconciliation: provider-agnostic is no longer purely roadmap — *ingestion* is now in scope for two providers. _(Reconciled 2026-06-20: roadmap bullet amended, substrate note cross-referenced, and a Log entry added — see product.md Log 2026-06-20.)_
-- "Support both providers" honestly means **ingestion parity + provider-labeled provenance**, not Coach/nudge parity. Disclose this distinction if a judge probes.
+- "Support both providers" honestly means **ingestion parity + provider-labeled provenance**, not Topic Analyst/Coach/nudge parity. Disclose this distinction if a judge probes.

@@ -30,6 +30,14 @@ def build_parser() -> argparse.ArgumentParser:
     reset.add_argument("--sandbox-root", default=str(DEFAULT_SANDBOX_ROOT))
     reset.add_argument("--spool-dir", default=str(DEFAULT_SPOOL_DIR))
 
+    extract = subcommands.add_parser(
+        "extract",
+        help="Extract worklist topics from a real repository (agentic discovery; no checks).",
+    )
+    extract.add_argument("--db", default=str(DEFAULT_DB_PATH))
+    extract.add_argument("--sandbox-root", default=str(DEFAULT_SANDBOX_ROOT))
+    extract.add_argument("--repo", required=True, help="Path to the repository to extract from.")
+
     nudge = subcommands.add_parser("nudge", help="Print the Claude SessionStart notification line.")
     nudge.add_argument("--db", default=str(DEFAULT_DB_PATH))
     nudge.add_argument("--sandbox-root", default=str(DEFAULT_SANDBOX_ROOT))
@@ -69,6 +77,22 @@ def main(argv: list[str] | None = None) -> int:
             spool_dir=Path(args.spool_dir),
         )
         print(f"Reset Ledger at {result['db_path']}")
+        return 0
+    if args.command == "extract":
+        repo = LedgerRepository(db_path=Path(args.db), sandbox_root=Path(args.sandbox_root))
+        repo.initialize()
+        result = repo.extract_or_refresh_topics(
+            args.repo,
+            progress=lambda message: print(f"[analyst] {message}", file=sys.stderr, flush=True),
+        )
+        print(
+            f"Discovered {result['surfaced']} verified worklist topic(s) for "
+            f"'{result['project']['slug']}' via the {result['analysis_source']} analyst "
+            f"(from {result['considered']} candidate anchor(s); "
+            f"{result['rejected']} citation(s) rejected)."
+        )
+        if result.get("fallback_reason"):
+            print(f"Claude fallback reason: {result['fallback_reason']}", file=sys.stderr)
         return 0
     if args.command == "nudge":
         repo = LedgerRepository(db_path=Path(args.db), sandbox_root=Path(args.sandbox_root))

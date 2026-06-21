@@ -45,7 +45,7 @@ That is sufficient to demonstrate the product thesis.
 - Ownership scores
 - Authentication, cloud sync, teams, or deployment
 
-Use exactly one real Git project with 3–5 seeded topics. One topic is the fully grounded, end-to-end hero path; optionally seed one prior completion to show persistence. Do not add real repositories merely to imply breadth.
+Use exactly one real Git project with 3–5 verified analyst-generated topics. One topic is the fully grounded, end-to-end hero path with a curated Check; optionally seed one prior completion to show persistence. Do not add real repositories merely to imply breadth.
 
 ## Frozen tech stack
 
@@ -67,8 +67,16 @@ Use exactly one real Git project with 3–5 seeded topics. One topic is the full
 **Editor — Monaco, textarea fallback.**
 - `@monaco-editor/react` primary (VS Code editor, free Python highlighting, credible to a dev-tool judge); plain monospace `<textarea>` as the hour-8 fallback if Monaco bundling eats time. Both POST the same buffer; the functional path is identical (backend writes the buffer to the mutated file in the temp dir, re-runs pytest).
 
+**Topic analysis — Claude Code discovers; deterministic code verifies.**
+- Deterministically ingest and index commits, code anchors, tests, docs, comments, and normalized Provider traces. Optimize this layer for lossless capture and recall, not semantic judgment.
+- Run a repository-level **Claude Code Topic Analyst** to search that material with scoped read-only `Read`, `Grep`, and `Glob` access. Deny mutation, arbitrary shell, web, and unrelated MCP tools.
+- Pin analyst runs to **Opus with high effort** (`--model opus --effort high`). Consume `stream-json` and surface safe phase/tool activity without exposing model reasoning or source contents. Do not impose a short wall-clock deadline; use a 10-minute no-output watchdog so active investigations may run as long as needed.
+- Require structured ordered Topic proposals containing title, maintenance obligation/invariant, categorical impact plus consequence, priority rationale, Code-anchor locators, and Provider-labeled Development-trace locators with link confidence. Derive ownership status and the evidence-count summary after verification.
+- Resolve every locator against the indexed source before persistence; reject unsupported/stale citations and hash accepted excerpts. Claude finds and interprets Evidence; Ledger proves the cited Evidence exists.
+- Do not reuse the Coach's all-tools-denied policy here. The analyst's job requires repository and trace investigation; the Coach's job requires withholding the solution.
+
 **Coach — the user's own Claude Code CLI, not the Anthropic API.**
-- *Why:* Ledger is local-first and dev-native. Riding the user's existing **Claude Code** auth means **no API key to manage and no per-token cost** — and it makes Ledger Claude-Code-native on *both* halves (hooks for ingestion, CLI for coaching), the register the Anthropic reps reward.
+- *Why:* Ledger is local-first and dev-native. Riding the user's existing **Claude Code** auth means **no API key to manage and no per-token cost** — and it makes the ingestion, analysis, and coaching spine Claude-Code-native, the register the Anthropic reps reward.
 - *Mechanism:* the FastAPI backend shells out per coach question to **`claude -p "<prompt>"`** (headless/print mode) with **`--output-format json`** and parses the `result` field (the JSON object also carries `session_id`, `total_cost_usd`). Prompt can be passed via stdin (10MB cap).
 - *Coach policy:* inject via **`--append-system-prompt`** (augments, doesn't replace — `--system-prompt` would strip Claude Code's own agent prompt). 3-field structure (`concept` / `diagnostic_question` / `suggested_observation`) by prompting + parsing; **reject any response containing a code block** at the response layer. (A native JSON-schema flag may exist — verify at build time; don't depend on it.)
 - *Withholding the answer is now an enforced permission boundary, not just prompt hygiene:* **deny all tools** — `--disallowedTools "Bash,Read,Edit,Write,WebFetch,Grep,Glob,NotebookEdit,mcp__*"`. With no Read/Bash, the coach literally cannot open the sandbox files, the original code, or the diff. Also keep them out of the prompt. (Belt and suspenders.)
@@ -92,21 +100,22 @@ Use exactly one real Git project with 3–5 seeded topics. One topic is the full
 | 5–8h | Check workspace: one-file editor, save, run, output |
 | 8–10h | Attempt timing, reflection, persistence |
 | 10–12h | Restricted conceptual coach |
-| 12–14h | Project dashboard and completed-topic history |
-| 14–16h | Claude hook ingestion and notification link |
-| 16–19h | Full integration, reset command, failure handling |
-| 19–21h | Visual polish |
-| 21–24h | Buffer, rehearsal, recording, and rest |
+| 12–15h | Claude Topic Analyst, citation verification, generated worklist |
+| 15–17h | Project dashboard, history, Claude hook and notification link |
+| 17–20h | Full integration, reset command, failure handling |
+| 20–22h | Visual polish |
+| 22–24h | Buffer, rehearsal, recording, and rest |
 
-Freeze features by hour 16. A working, visually rough demo is substantially more valuable than a polished half-loop.
+Freeze features by hour 17. A working, visually rough demo is substantially more valuable than a polished half-loop.
 
 ## Hard checkpoints
 
 - **Hour 5:** The server can create a sandbox and produce the intended failing test.
 - **Hour 8:** A browser edit can make that test pass.
 - **Hour 12:** Completion evidence persists.
-- **Hour 16:** The hook-to-dashboard-to-check flow works.
-- **Hour 19:** Stop changing the architecture.
+- **Hour 15:** Claude has produced a worklist whose cited code and trace Evidence resolves.
+- **Hour 17:** The hook-to-dashboard-to-check flow works.
+- **Hour 20:** Stop changing the architecture.
 
 If the hour-8 checkpoint slips, drop Monaco and use a plain code editor or launch the developer's local editor. Never cut the real sandbox and test loop.
 
@@ -127,6 +136,6 @@ Do not spend pre-event time expanding the concept.
 
 ## Solo versus teammate
 
-This build is feasible solo with moderate execution risk. It becomes infeasible as soon as automatic topics, a general sandbox, or learning plans enter the build.
+This build is feasible with moderate execution risk only because automatic Topic analysis is constrained to one enrolled repository, one Claude Code analyst, structured output, and citation verification. A general sandbox, multi-provider analysis, or learning plans remain infeasible in this window.
 
 A teammate is optional. Recruit only someone who can independently own user-interface polish while Owen retains the end-to-end sandbox path. A teammate who changes the concept or requires close coordination increases delivery risk.
