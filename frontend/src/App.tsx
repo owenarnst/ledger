@@ -399,19 +399,42 @@ export default function App() {
     }
   }, [running, check])
 
-  const submitAnswers = useCallback(async () => {
-    if (!check) return
+  const submitAnswers = useCallback(async (questionId?: string) => {
+    if (!check || !questionId || answers[questionId] === undefined) return
     try {
-      const result = await api.submitAnswers(check.id, answers)
-      setAnswerResults(result.results)
-      if (result.passed && check.difficulty === 'easy') {
-        setPhase('pass')
-      }
+      const result = await api.submitAnswers(check.id, { [questionId]: answers[questionId] })
+      const questionResult = result.results.find((item) => item.question_id === questionId)
+      if (!questionResult) throw new Error('backend did not grade the selected question')
+      setAnswerResults((current) => {
+        const next = [...current.filter((item) => item.question_id !== questionId), questionResult]
+        const questionIds = (check.plan?.steps || [])
+          .filter((step) => step.type === 'multiple_choice' && step.question_id)
+          .map((step) => step.question_id as string)
+        const allCurrentAnswersCorrect =
+          questionIds.length > 0 &&
+          questionIds.every((id) => {
+            const graded = next.find((item) => item.question_id === id)
+            return !!graded && graded.correct && graded.selected_index === answers[id]
+          })
+        if (allCurrentAnswersCorrect && check.difficulty === 'easy') setPhase('pass')
+        return next
+      })
     } catch (e) {
       setRunOutput(`Could not submit answers: ${e instanceof Error ? e.message : String(e)}`)
       setPhase('error')
     }
   }, [check, answers])
+
+  const answerQuestion = useCallback(
+    (questionId: string, choiceIndex: number) => {
+      if (answers[questionId] === choiceIndex) return
+      setAnswers((current) => ({ ...current, [questionId]: choiceIndex }))
+      if (check?.difficulty === 'easy') {
+        setPhase((current) => (current === 'pass' ? 'idle' : current))
+      }
+    },
+    [answers, check?.difficulty],
+  )
 
   // ---- coach ----
   const pushCoach = useCallback(
@@ -578,9 +601,9 @@ export default function App() {
             askChip={pushCoach}
             answers={answers}
             answerResults={answerResults}
-            onAnswer={(questionId, choiceIndex) => setAnswers((current) => ({ ...current, [questionId]: choiceIndex }))}
+            onAnswer={answerQuestion}
             submitAnswers={submitAnswers}
-            canComplete={phase === 'pass' || (check?.difficulty === 'easy' && answerResults.length > 0 && answerResults.every((item) => item.correct))}
+            canComplete={phase === 'pass'}
             completeCheck={completeCheck}
           />
         )}

@@ -111,7 +111,8 @@ def test_easy_check_returns_multiple_choice_only_plan(tmp_path):
     assert "correct_index" not in str(check["plan"])
     assert check["plan"]["questions"][0]["kind"] == "concept"
     assert check["plan"]["questions"][1]["kind"] == "debugging"
-    assert check["plan"]["questions"][1]["choices"][0].startswith("return ")
+    assert check["plan"]["questions"][1]["choices"][0].startswith("def visible_documents_for_tenant")
+    assert "\n    return " in check["plan"]["questions"][1]["choices"][0]
 
 
 def test_medium_check_returns_question_then_sandbox_plan(tmp_path):
