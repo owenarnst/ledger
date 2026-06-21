@@ -21,10 +21,45 @@ const sectionLabel: React.CSSProperties = {
   marginBottom: 9,
 }
 
+// One trace segment: a user prompt (accent-quoted) or a tool call (chip + target).
+// The verified "prompt + tool-call hunk" the analyst cited from the transcript.
+function TraceSegmentRow({ seg }: { seg: api.TraceSegment }) {
+  if (seg.kind === 'prompt') {
+    return (
+      <div
+        style={{
+          borderLeft: '2px solid var(--accent)',
+          background: 'var(--panel2)',
+          borderRadius: '0 7px 7px 0',
+          padding: '8px 12px',
+          display: 'flex',
+          gap: 9,
+          alignItems: 'baseline',
+        }}
+      >
+        <span style={{ fontFamily: mono, fontSize: 9.5, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--accent)', flex: 'none' }}>
+          Prompt
+        </span>
+        <span style={{ fontSize: 12.5, color: 'var(--tx)', lineHeight: 1.5 }}>{seg.text}</span>
+      </div>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', gap: 9, alignItems: 'center', minWidth: 0 }}>
+      <span style={{ ...toolChip, flex: 'none' }}>{seg.tool}</span>
+      {seg.target && (
+        <span style={{ fontFamily: mono, fontSize: 11.5, color: 'var(--mut)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {seg.target}
+        </span>
+      )}
+    </div>
+  )
+}
+
 // One provider-neutral Evidence record, collapsed by default. Activating it (click
 // or keyboard) reveals the exact excerpt, durable source locator, and link
-// confidence. Code anchors and Development traces share this layout; only the
-// collapsed summary differs.
+// confidence. Code anchors and the Agent trace share this layout; only the
+// collapsed summary and expanded body (code excerpt vs prompt + tool-call hunk) differ.
 function EvidenceRow({ rec, variant }: { rec: api.EvidenceRecord; variant: 'code' | 'trace' }) {
   const [open, setOpen] = useState(false)
   const locator = rec.source_path || rec.title || '—'
@@ -87,35 +122,46 @@ function EvidenceRow({ rec, variant }: { rec: api.EvidenceRecord; variant: 'code
 
       {open && (
         <div style={{ padding: '0 16px 14px 40px' }}>
-          {rec.body && (
-            <pre
-              className="lg-scroll"
-              style={{
-                margin: '4px 0 12px',
-                padding: '11px 13px',
-                background: '#121110',
-                border: '1px solid var(--bd)',
-                borderRadius: 8,
-                fontFamily: mono,
-                fontSize: 11.5,
-                lineHeight: 1.6,
-                color: '#cdcabf',
-                overflowX: 'auto',
-                whiteSpace: 'pre',
-              }}
-            >
-              {rec.body}
-            </pre>
-          )}
-          {variant === 'trace' && rec.tool_sequence && rec.tool_sequence.length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
-              {rec.tool_sequence.map((tool, i) => (
-                <Fragment key={i}>
-                  {i > 0 && <span style={{ color: 'var(--faint)', fontFamily: mono, fontSize: 11 }}>→</span>}
-                  <span style={toolChip}>{tool}</span>
-                </Fragment>
+          {variant === 'trace' && rec.segments && rec.segments.length > 0 ? (
+            // The verified prompt + tool-call hunk, in transcript order.
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7, margin: '4px 0 12px' }}>
+              {rec.segments.map((seg, i) => (
+                <TraceSegmentRow key={i} seg={seg} />
               ))}
             </div>
+          ) : (
+            <>
+              {rec.body && (
+                <pre
+                  className="lg-scroll"
+                  style={{
+                    margin: '4px 0 12px',
+                    padding: '11px 13px',
+                    background: '#121110',
+                    border: '1px solid var(--bd)',
+                    borderRadius: 8,
+                    fontFamily: mono,
+                    fontSize: 11.5,
+                    lineHeight: 1.6,
+                    color: '#cdcabf',
+                    overflowX: 'auto',
+                    whiteSpace: 'pre',
+                  }}
+                >
+                  {rec.body}
+                </pre>
+              )}
+              {variant === 'trace' && rec.tool_sequence && rec.tool_sequence.length > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+                  {rec.tool_sequence.map((tool, i) => (
+                    <Fragment key={i}>
+                      {i > 0 && <span style={{ color: 'var(--faint)', fontFamily: mono, fontSize: 11 }}>→</span>}
+                      <span style={toolChip}>{tool}</span>
+                    </Fragment>
+                  ))}
+                </div>
+              )}
+            </>
           )}
           <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontFamily: mono, fontSize: 10.5, color: 'var(--faint)' }}>
             <span>
@@ -323,10 +369,10 @@ export default function Topic({ detail, heroPracticed, histStats, onStartCheck, 
             emptyNote="No code anchors recorded for this Topic."
           />
           <EvidenceGroup
-            title="Development traces"
+            title="Agent trace"
             records={traces}
             variant="trace"
-            emptyNote="No development traces are linked to this Topic yet."
+            emptyNote="No agent trace is linked to this Topic yet."
           />
         </div>
 

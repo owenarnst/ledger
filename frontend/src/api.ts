@@ -57,14 +57,25 @@ export interface Topic {
   evidence_summary: string
 }
 
+// One addressable unit of an agent session — a user prompt or a tool call. The
+// analyst-cited, server-verified "prompt + tool-call hunk" the Agent trace renders.
+export interface TraceSegment {
+  kind: 'prompt' | 'tool_call' | string
+  text?: string
+  tool?: string | null
+  target?: string | null
+}
+
 // One immutable Evidence record grounding a Topic. Code anchors carry no provider;
-// development traces carry a Provider tag plus session/confidence provenance.
+// agent traces carry a Provider tag plus session/confidence provenance and the
+// verified prompt + tool-call segments.
 export interface EvidenceRecord {
   kind: string
   title?: string
   body?: string
   provider?: string
   tool_sequence?: string[]
+  segments?: TraceSegment[]
   source_path?: string | null
   session_id?: string | null
   link_confidence?: string | null

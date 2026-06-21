@@ -97,7 +97,7 @@ export default function Dashboard({ topics, onOpen }: DashboardProps) {
             <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.2" />
             <path d="M8 5.2v3.4M8 10.6h.01" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
           </svg>
-          One real repo. Only the tenant-isolation topic is grounded in real evidence for this demo.
+          One real repo. Each Agent trace is read live from your real Claude Code sessions in it — not a committed fixture.
         </div>
       </div>
     </div>

@@ -1,9 +1,5 @@
 {
-  "_comment": "Demo worklist seeded from a live Claude Topic Analyst run (claude-opus-4-8) on docs-search-api @8d57340. exercise_plans are live ClaudeAnalyst-generated easy + medium plans for all three topics, captured verbatim so the Debug-to-Own MCQs load instantly and deterministically and match each topic-specific sandbox (hard is sandbox-only and needs no plan). Regenerate by re-running extraction / a live check; do not hand-edit.",
-  "session": {
-    "id": "claude-demo-session",
-    "source_path": "~/.claude/projects/demo.jsonl"
-  },
+  "_comment": "Demo worklist seeded from a live Claude Topic Analyst run (claude-opus-4-8) on docs-search-api @8d57340. exercise_plans are live ClaudeAnalyst-generated easy + medium plans for all three topics, captured verbatim so the Debug-to-Own MCQs load instantly and deterministically and match each topic-specific sandbox (hard is sandbox-only and needs no plan). The curated seed carries code-anchor evidence only; the Agent trace is sourced live from the repo's real ~/.claude transcripts via `make extract-claude` (no committed transcript fixture). Regenerate by re-running extraction / a live check; do not hand-edit.",
   "commit_sha": "demo-seed",
   "topics": [
     {
@@ -72,21 +68,6 @@
           "link_confidence": "exact",
           "session_id": null,
           "tool_sequence": []
-        },
-        {
-          "kind": "claude_receipt",
-          "source_path": "~/.claude/projects/demo.jsonl",
-          "title": "Claude Code session",
-          "body": "Read retrieval/rerank.py -> Edit retrieval/rerank.py -> Bash python -m pytest.",
-          "excerpt_sha": null,
-          "relevance": "Build session that authored the pre-rerank tenant filter.",
-          "link_confidence": "hand_verified",
-          "session_id": "claude-demo-session",
-          "tool_sequence": [
-            "Read retrieval/rerank.py",
-            "Edit retrieval/rerank.py",
-            "Bash python -m pytest"
-          ]
         }
       ]
     },

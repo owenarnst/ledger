@@ -13,6 +13,7 @@ from backend.analyst import (
     TraceCitation,
     TraceLocator,
 )
+from backend.ingestion import TraceSegment
 from backend.sandbox import HERO_REPO
 from backend.verifier import fingerprint, verify_proposals
 
@@ -98,6 +99,36 @@ def test_verify_accepts_supported_trace_and_rejects_unsupported():
     assert verified.traces[0].source_path == "x.jsonl"
     assert verified.traces[0].link_confidence == "hand_verified"
     assert any("unsupported trace" in r.reason for r in result.rejected)
+
+
+def test_verify_resolves_cited_segments_and_drops_unknown_ids():
+    index = _index()
+    citation = _real_anchor_citation(index)
+    segments = (
+        TraceSegment(id="seg0", kind="prompt", text="filter by tenant before rerank"),
+        TraceSegment(id="seg1", kind="tool_call", tool="Edit", target="retrieval/rerank.py"),
+    )
+    available = (
+        TraceLocator(provider="claude_code", session_id="s1", source_path="x.jsonl", segments=segments),
+    )
+    # The analyst cites two real segment ids plus one the session never had.
+    cited = TraceCitation(
+        "claude_code", "x.jsonl", "authored the filter", "hand_verified",
+        segment_ids=("seg0", "seg1", "ghost"),
+    )
+
+    result = verify_proposals(
+        [_proposal([citation], traces=[cited])],
+        repo_root=HERO_REPO,
+        index=index,
+        available_traces=available,
+    )
+
+    verified_trace = result.verified[0].traces[0]
+    # Only the two segments the session actually contains survive, in order.
+    assert [s.id for s in verified_trace.segments] == ["seg0", "seg1"]
+    assert verified_trace.segments[0].kind == "prompt"
+    assert verified_trace.segments[1].target == "retrieval/rerank.py"
 
 
 def test_verify_tolerates_trace_locator_with_line_suffix():

@@ -1,6 +1,9 @@
+import json
+
 from backend.db import connect, initialize_schema
 from backend.repository import LedgerRepository
-from backend.ingestion import ClaudeCodeAdapter, GitAdapter
+from backend.ingestion import ClaudeCodeAdapter, GitAdapter, claude_transcripts_dir
+from backend.sandbox import HERO_REPO
 
 
 def test_repository_seeds_demo_project_and_topics(tmp_path):
@@ -30,22 +33,16 @@ def test_seeded_topic_has_revision(tmp_path):
     assert topic["current_revision"]["code_path"] == "retrieval/rerank.py"
 
 
-def test_seeded_topic_has_session_grounded_claude_receipt(tmp_path):
+def test_seeded_demo_carries_code_anchors_but_no_baked_agent_trace(tmp_path):
+    # The curated seed ships code-anchor evidence only; the Agent trace is sourced
+    # live from the repo's real ~/.claude transcripts (no committed fixture).
     repo = LedgerRepository(tmp_path / "ledger.db")
     repo.initialize()
 
-    topic = repo.get_topic("tenant-cache-isolation")
-    receipt = next(item for item in topic["evidence"] if item["kind"] == "claude_receipt")
-
-    assert receipt["provider"] == "claude_code"
-    assert receipt["session_id"] == "claude-demo-session"
-    assert receipt["source_path"] == "~/.claude/projects/demo.jsonl"
-    assert receipt["tool_sequence"] == [
-        "Read retrieval/rerank.py",
-        "Edit retrieval/rerank.py",
-        "Bash python -m pytest",
-    ]
-    assert receipt["link_confidence"] == "hand_verified"
+    for topic_id in ("tenant-cache-isolation", "docs-search-api-rerank-rerank"):
+        topic = repo.get_topic(topic_id)
+        assert any(e["kind"] == "code" for e in topic["evidence"])
+        assert not any(e["kind"].endswith("_receipt") for e in topic["evidence"])
 
 
 def test_initialize_backfills_missing_seeded_revision(tmp_path):
@@ -78,46 +75,46 @@ def test_initialize_backfills_missing_seeded_revision(tmp_path):
     assert topic["current_revision"]["id"] == "tenant-cache-isolation-rev-1"
 
 
-def test_initialize_backfills_seeded_receipt_grounding(tmp_path):
-    db_path = tmp_path / "ledger.db"
-    with connect(db_path) as conn:
-        initialize_schema(conn)
-        conn.execute(
-            "INSERT INTO projects (id, slug, name, repo_path) VALUES (?, ?, ?, ?)",
-            ("project-docs-search-api", "docs-search-api", "Docs Search API", "/demo/docs-search-api"),
+def test_extract_sources_agent_trace_from_real_claude_transcripts(tmp_path, monkeypatch):
+    # The Agent trace is sourced from the repo's real ~/.claude transcripts (no
+    # fixture): extract ingests them, and the deterministic analyst attaches the
+    # tool-call segments that touched a topic's anchor file. HOME is redirected so
+    # the test controls the transcript directory instead of the real machine's.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    transcripts = claude_transcripts_dir(HERO_REPO)
+    transcripts.mkdir(parents=True)
+    rerank = str(HERO_REPO / "retrieval" / "rerank.py")
+    (transcripts / "sess-live.jsonl").write_text(
+        "\n".join(
+            json.dumps(r)
+            for r in [
+                {"type": "user", "cwd": str(HERO_REPO), "sessionId": "sess-live",
+                 "message": {"role": "user", "content": "Scope candidates to the caller's tenant before rerank."}},
+                {"type": "assistant", "message": {"role": "assistant", "content": [
+                    {"type": "tool_use", "name": "Edit", "input": {"file_path": rerank}}]}},
+            ]
         )
-        conn.execute(
-            """
-            INSERT INTO topics
-            (id, project_id, provider, title, state, summary, why_now, risk_class, caller_count, claude_authored, rank)
-            VALUES (?, 'project-docs-search-api', 'claude_code', ?, 'check_recommended', ?, ?, 'persistence', 5, 1, 1)
-            """,
-            (
-                "tenant-cache-isolation",
-                "Tenant isolation in retrieval cache",
-                "Cached retrieval results must never cross tenant boundaries.",
-                "Claude touched the retrieval path.",
-            ),
-        )
-        conn.execute(
-            "INSERT INTO evidence (topic_id, provider, kind, title, body) VALUES (?, ?, ?, ?, ?)",
-            (
-                "tenant-cache-isolation",
-                "claude_code",
-                "claude_receipt",
-                "Claude Code session",
-                "Read retrieval/rerank.py -> Edit retrieval/rerank.py -> Bash python -m pytest.",
-            ),
-        )
-        conn.commit()
+    )
 
-    repo = LedgerRepository(db_path)
-    repo.initialize()
+    repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sbx")
+    repo.initialize_schema()
+    out = repo.extract_or_refresh_topics(str(HERO_REPO))  # deterministic analyst
 
-    topic = repo.get_topic("tenant-cache-isolation")
-    receipt = next(item for item in topic["evidence"] if item["kind"] == "claude_receipt")
-    assert receipt["session_id"] == "claude-demo-session"
-    assert receipt["link_confidence"] == "hand_verified"
+    traces = [
+        tr
+        for t in out["topics"]
+        for tr in repo.get_topic(t["id"])["development_traces"]
+    ]
+    assert traces, "expected the real transcript to attach as an Agent trace"
+    # The trace points at the real session file and carries the Edit segment.
+    assert any("sess-live.jsonl" in (tr.get("source_path") or "") for tr in traces)
+    edits = [
+        s
+        for tr in traces
+        for s in (tr.get("segments") or [])
+        if s["kind"] == "tool_call" and s["tool"] == "Edit" and "rerank.py" in (s.get("target") or "")
+    ]
+    assert edits, "the rerank.py Edit from the real session should be cited"
 
 
 def test_check_lifecycle_persists_attempt_and_completion(tmp_path):
