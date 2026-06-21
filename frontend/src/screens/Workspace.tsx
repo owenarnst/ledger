@@ -137,6 +137,8 @@ export default function Workspace({
   const b = banner(phase, runOutput, targetFile, check?.test_command)
   const [editorScroll, setEditorScroll] = useState({ top: 0, left: 0 })
   const [questionCursor, setQuestionCursor] = useState(0)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [outputH, setOutputH] = useState(200)
 
   const testFile = (files || []).find((f) => !f.editable)
   const testContent = testFile ? roContent[testFile.path] || '' : ''
@@ -183,6 +185,40 @@ export default function Workspace({
     if (firstWrong >= 0) setQuestionCursor(firstWrong)
   }, [answerResults, mcSteps, resultByQuestion])
 
+  // Indentation in the editor. Tab inserts spaces (Python's unit) or indents the
+  // selected block; Shift+Tab dedents. Using execCommand keeps the native undo
+  // stack and fires the input event, so the controlled value updates via onCode.
+  const UNIT = '    '
+  const onEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== 'Tab') return
+    e.preventDefault()
+    const ta = e.currentTarget
+    const { selectionStart, selectionEnd, value } = ta
+    const selection = value.slice(selectionStart, selectionEnd)
+
+    if (selection.includes('\n')) {
+      const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1
+      const block = value.slice(lineStart, selectionEnd)
+      const next = e.shiftKey ? block.replace(/^( {1,4}|\t)/gm, '') : block.replace(/^/gm, UNIT)
+      ta.setSelectionRange(lineStart, selectionEnd)
+      document.execCommand('insertText', false, next)
+      ta.setSelectionRange(lineStart, lineStart + next.length)
+      return
+    }
+
+    if (e.shiftKey) {
+      const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1
+      const indent = (value.slice(lineStart).match(/^( {1,4}|\t)/) || [])[0]
+      if (indent) {
+        ta.setSelectionRange(lineStart, lineStart + indent.length)
+        document.execCommand('delete')
+      }
+      return
+    }
+
+    document.execCommand('insertText', false, UNIT)
+  }
+
   const runBtnStyle = {
     display: 'inline-flex',
     alignItems: 'center',
@@ -191,13 +227,35 @@ export default function Workspace({
     color: '#1c140f',
     border: 'none',
     borderRadius: 8,
-    padding: '8px 16px',
+    padding: '6px 14px',
     fontFamily: "'Geist', sans-serif",
     fontSize: 13,
     fontWeight: 600,
     cursor: running ? 'default' : 'pointer',
   }
+  const runSpinner = running ? (
+    <span style={{ width: 11, height: 11, border: '2px solid rgba(28,20,15,0.35)', borderTopColor: '#1c140f', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />
+  ) : null
+  const sidebarToggleStyle = { background: 'transparent', border: 'none', color: 'var(--faint)', cursor: 'pointer', fontFamily: mono, fontSize: 12, lineHeight: 1, padding: 2 }
   const resizeStyle = { width: 8, flex: 'none', margin: '0 -4px', zIndex: 6, cursor: 'col-resize', background: 'transparent' }
+
+  // Drag the seam above the output panel to resize the terminal (row-resize).
+  const dragOutput = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startY = e.clientY
+    const start = outputH
+    const move = (ev: MouseEvent) => setOutputH(Math.min(560, Math.max(96, start + (startY - ev.clientY))))
+    const up = () => {
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('mouseup', up)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
+  }
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -241,9 +299,21 @@ export default function Workspace({
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
           <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
             {/* file tree */}
-            {!easyMode && canShowSandbox && (
+            {!easyMode && canShowSandbox && !sidebarOpen && (
+              <div style={{ width: 30, flex: 'none', borderRight: '1px solid var(--bd)', background: 'var(--panel)', display: 'flex', justifyContent: 'center', paddingTop: 12 }}>
+                <button className="lg-hover-link" onClick={() => setSidebarOpen(true)} title="Show sandbox files" style={sidebarToggleStyle}>
+                  ▸
+                </button>
+              </div>
+            )}
+            {!easyMode && canShowSandbox && sidebarOpen && (
               <div style={{ width: 184, flex: 'none', borderRight: '1px solid var(--bd)', background: 'var(--panel)', padding: '12px 8px', overflow: 'auto' }}>
-                <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--faint)', padding: '4px 8px 10px' }}>Sandbox</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px 10px' }}>
+                  <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--faint)' }}>Sandbox</span>
+                  <button className="lg-hover-link" onClick={() => setSidebarOpen(false)} title="Collapse sandbox files" style={{ ...sidebarToggleStyle, marginLeft: 'auto' }}>
+                    ◂
+                  </button>
+                </div>
                 {(files || []).map((f) => (
                   <div
                     key={f.path}
@@ -273,31 +343,38 @@ export default function Workspace({
             {/* editor + output */}
             <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               {!checkpointOnly && (
-                <div style={{ flex: 'none', height: 38, borderBottom: '1px solid var(--bd)', background: 'var(--panel)', display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', fontFamily: mono, fontSize: 11.5, color: 'var(--mut)' }}>
+                <div style={{ flex: 'none', height: 42, borderBottom: '1px solid var(--bd)', background: 'var(--panel)', display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', fontFamily: mono, fontSize: 11.5, color: 'var(--mut)' }}>
                   <span style={{ opacity: 0.7 }}>▾</span>
                   {easyMode ? 'Multiple-choice check' : af?.name || activeFile || '—'}
-                  {editable && canShowSandbox && !easyMode && (
-                    <button
-                      onClick={addPseudocodeComments}
-                      disabled={pseudocodeRunning}
-                      style={{
-                        marginLeft: 'auto',
-                        fontFamily: mono,
-                        fontSize: 10.5,
-                        color: pseudocodeRunning ? 'var(--faint)' : 'var(--accent)',
-                        background: pseudocodeRunning ? 'rgba(255,255,255,0.03)' : 'rgba(200,116,77,0.08)',
-                        border: '1px solid rgba(200,116,77,0.28)',
-                        borderRadius: 6,
-                        padding: '4px 8px',
-                        cursor: pseudocodeRunning ? 'default' : 'pointer',
-                      }}
-                    >
-	                      {pseudocodeRunning ? 'typing hints…' : 'Add pseudocode hints'}
-                    </button>
-                  )}
-                  {!editable && activeFile && (
-                    <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--faint)', border: '1px solid var(--bd2)', padding: '1px 6px', borderRadius: 4 }}>read-only</span>
-                  )}
+                  <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {editable && canShowSandbox && !easyMode && (
+                      <button
+                        onClick={addPseudocodeComments}
+                        disabled={pseudocodeRunning}
+                        style={{
+                          fontFamily: mono,
+                          fontSize: 10.5,
+                          color: pseudocodeRunning ? 'var(--faint)' : 'var(--accent)',
+                          background: pseudocodeRunning ? 'rgba(255,255,255,0.03)' : 'rgba(200,116,77,0.08)',
+                          border: '1px solid rgba(200,116,77,0.28)',
+                          borderRadius: 6,
+                          padding: '4px 8px',
+                          cursor: pseudocodeRunning ? 'default' : 'pointer',
+                        }}
+                      >
+                        {pseudocodeRunning ? 'typing hints…' : 'Add pseudocode hints'}
+                      </button>
+                    )}
+                    {!editable && activeFile && (
+                      <span style={{ fontSize: 10, color: 'var(--faint)', border: '1px solid var(--bd2)', padding: '1px 6px', borderRadius: 4 }}>read-only</span>
+                    )}
+                    {canShowSandbox && !easyMode && (
+                      <button onClick={runChecks} disabled={running} title="exit code is the oracle" style={runBtnStyle}>
+                        {runSpinner}
+                        {running ? 'Running…' : 'Run checks'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -368,7 +445,7 @@ export default function Workspace({
                             <span style={{ display: 'flex', alignItems: 'flex-start', gap: 9 }}>
                               <span style={{ flex: 'none', width: 18, height: 18, borderRadius: '50%', border: `1px solid ${selected ? 'var(--accent)' : 'var(--bd2)'}`, background: selected ? 'var(--accent)' : 'transparent', marginTop: isCode ? 1 : 0 }} />
                               {isCode ? (
-                                <code style={{ fontFamily: mono, fontSize: 12.5, lineHeight: 1.55, color: 'var(--tx)', whiteSpace: 'pre-wrap' }}>{choice}</code>
+                                <code className="lg-code" style={{ fontFamily: mono, fontSize: 12.5, lineHeight: 1.55, color: 'var(--tx)', whiteSpace: 'pre-wrap' }}>{choice}</code>
                               ) : (
                                 <span style={{ fontSize: 13, lineHeight: 1.45 }}>{choice}</span>
                               )}
@@ -443,6 +520,7 @@ export default function Workspace({
                       </div>
                       <div style={{ flex: 1, minWidth: 0, position: 'relative', overflow: 'hidden' }}>
                         <pre
+                          className="lg-code"
                           style={{
                             position: 'absolute',
                             inset: 0,
@@ -461,10 +539,11 @@ export default function Workspace({
                           {hl(code, false)}
                         </pre>
                         <textarea
-                          className="lg-scroll"
+                          className="lg-scroll lg-code"
                           spellCheck="false"
                           value={code}
                           onChange={onCode}
+                          onKeyDown={onEditorKeyDown}
                           onScroll={(e) => setEditorScroll({ top: e.currentTarget.scrollTop, left: e.currentTarget.scrollLeft })}
                           style={{
                             position: 'absolute',
@@ -496,23 +575,20 @@ export default function Workspace({
                           </div>
                         ))}
                       </div>
-                      <pre style={{ margin: 0, padding: '14px 16px', fontFamily: mono, fontSize: 13, lineHeight: '21px', whiteSpace: 'pre', color: 'var(--mut)' }}>{hl(roText, true)}</pre>
+                      <pre className="lg-code" style={{ margin: 0, padding: '14px 16px', fontFamily: mono, fontSize: 13, lineHeight: '21px', whiteSpace: 'pre', color: 'var(--mut)' }}>{hl(roText, true)}</pre>
                     </div>
                   )}
 
-                  {/* run bar */}
-                  <div style={{ flex: 'none', borderTop: '1px solid var(--bd)', background: 'var(--panel)', padding: '11px 16px', display: 'flex', alignItems: 'center', gap: 14 }}>
-                    <button onClick={runChecks} disabled={running} style={runBtnStyle}>
-                      {running && <span style={{ width: 11, height: 11, border: '2px solid rgba(28,20,15,0.35)', borderTopColor: '#1c140f', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />}
-                      {running ? 'Running…' : 'Run checks'}
-                    </button>
-                    <div style={{ fontFamily: mono, fontSize: 11.5, color: 'var(--faint)' }}>exit code is the oracle · {check?.test_command || 'pytest'}</div>
-                  </div>
+                  {/* drag to resize the terminal */}
+                  <div className="lg-resize" onMouseDown={dragOutput} title="Drag to resize" style={{ flex: 'none', height: 8, margin: '-4px 0', zIndex: 6, cursor: 'row-resize', background: 'transparent' }} />
 
-                  {/* output */}
-                  <div className="lg-scroll" style={{ flex: 'none', height: 200, borderTop: '1px solid var(--bd)', background: '#121110', overflow: 'auto' }}>
-                    <div style={b.css}>{b.label}</div>
-                    <pre style={{ margin: 0, padding: '12px 16px', fontFamily: mono, fontSize: 11.5, lineHeight: 1.65, color: 'var(--mut)', whiteSpace: 'pre-wrap' }}>{b.out}</pre>
+                  {/* output / terminal */}
+                  <div className="lg-scroll" style={{ flex: 'none', height: outputH, borderTop: '1px solid var(--bd)', background: '#121110', overflow: 'auto' }}>
+                    <div style={b.css}>
+                      <span>{b.label}</span>
+                      <span style={{ marginLeft: 'auto', fontWeight: 400, color: 'var(--faint)' }}>exit code is the oracle · {check?.test_command || 'pytest'}</span>
+                    </div>
+                    <pre className="lg-code" style={{ margin: 0, padding: '12px 16px', fontFamily: mono, fontSize: 11.5, lineHeight: 1.65, color: 'var(--mut)', whiteSpace: 'pre-wrap' }}>{b.out}</pre>
                   </div>
                 </>
               )}
