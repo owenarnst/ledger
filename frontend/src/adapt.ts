@@ -3,18 +3,21 @@
 // frontend never invents topics, providers, or risk semantics — it relabels.
 
 import { Topic, TopicDetail } from './api'
-import { ChipKind } from './theme'
 
-const STATE_BADGE: Record<string, { badge: string; badgeLabel: string; faint?: boolean }> = {
-  check_recommended: { badge: 'recommended', badgeLabel: 'Check recommended' },
-  code_changed_since_practice: { badge: 'changed', badgeLabel: 'Code changed since practice' },
-  practiced: { badge: 'practiced', badgeLabel: 'Practiced', faint: true },
-  in_progress: { badge: 'recommended', badgeLabel: 'In progress' },
+// Lifecycle state → ownership-status badge color (theme.badge kind) + faintness.
+// The human-readable label itself comes from the backend's derived
+// ownership_status; this map only chooses the calm, non-alarm color (#23 / visual
+// tone lock — semantic red/green is reserved for test pass/fail).
+const STATE_BADGE_KIND: Record<string, { kind: string; faint?: boolean }> = {
+  check_recommended: { kind: 'recommended' },
+  in_progress: { kind: 'recommended' },
+  revisit_suggested: { kind: 'changed' },
+  code_changed_since_practice: { kind: 'changed' },
+  practiced: { kind: 'practiced', faint: true },
 }
 
 // States where an ownership check would be offered, *if* the Topic also carries
-// a curated recipe (topic.checkable). The first topic that is both actionable
-// and checkable becomes the demo hero — the one the backend can sandbox.
+// a curated recipe (topic.checkable). Used by the rail's "checks ready" count.
 const ACTIONABLE = new Set(['check_recommended', 'code_changed_since_practice', 'in_progress'])
 
 export const isActionable = (state: string): boolean => ACTIONABLE.has(state)
@@ -23,57 +26,39 @@ export const isActionable = (state: string): boolean => ACTIONABLE.has(state)
 // backend's risk taxonomy into friendlier-but-invented labels.
 export const riskLabel = (rc: string): string => (rc || '').replace(/_/g, '-')
 
-export interface Chip {
-  label: string
-  k: ChipKind
+// Categorical impact label — High / Medium / Low, never a numeric score (#23).
+export function impactLabel(level: string): string {
+  const v = (level || '').toLowerCase()
+  if (v === 'high' || v === 'medium' || v === 'low') return v[0].toUpperCase() + v.slice(1)
+  return v ? v[0].toUpperCase() + v.slice(1) : '—'
 }
 
-export function providerChip(topic: Topic): Chip | null {
-  if (topic.claude_authored) return { label: '✳ Claude-authored', k: 'claude' }
-  if (topic.provider === 'codex') return { label: '⬡ Codex-authored', k: 'codex' }
-  return null
-}
-
-export function badgeForState(state: string) {
-  return STATE_BADGE[state] || { badge: 'recommended', badgeLabel: state }
-}
-
+// One verified-worklist row. Exactly four display fields (#23): the durable Topic
+// title, the ownership-status badge, the verified evidence summary, and the
+// categorical impact level. No signal chips, score, rank rationale, or why-expansion.
 export interface Card {
   id: string
   title: string
   badge: string
   badgeLabel: string
   faint: boolean
-  isHero: boolean
-  expanded: boolean
-  why: string
-  chips: Chip[]
+  evidenceSummary: string
+  impact: string
   raw: Topic
 }
 
-// topics arrive ordered by rank. The first actionable one becomes the hero.
+// Topics arrive in the analyst's order; the row preserves that order verbatim.
 export function toCards(topics: Topic[]): Card[] {
-  let heroTaken = false
   return topics.map((t) => {
-    const sb = badgeForState(t.state)
-    const isHero = !heroTaken && ACTIONABLE.has(t.state) && !!t.checkable
-    if (isHero) heroTaken = true
-    const callers = `${t.caller_count} ${t.caller_count === 1 ? 'caller' : 'callers'}`
-    const chips = [
-      { label: callers, k: 'plain' },
-      { label: `risk: ${riskLabel(t.risk_class)}`, k: 'risk' },
-      providerChip(t),
-    ].filter(Boolean) as Chip[]
+    const sb = STATE_BADGE_KIND[t.state] || { kind: 'recommended' }
     return {
       id: t.id,
       title: t.title,
-      badge: sb.badge,
-      badgeLabel: sb.badgeLabel,
+      badge: sb.kind,
+      badgeLabel: t.ownership_status || t.state.replace(/_/g, ' '),
       faint: !!sb.faint,
-      isHero,
-      expanded: isHero,
-      why: t.why_now || '',
-      chips,
+      evidenceSummary: t.evidence_summary || '',
+      impact: impactLabel(t.impact_level),
       raw: t,
     }
   })

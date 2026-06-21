@@ -1,7 +1,10 @@
-// Issue #6 — Ranked ownership worklist (curated order). Rank #1 expanded into
-// the authored "why selected". Provider-labeled chips per row.
+// Issue #23 — Worklist dashboard. Renders the analyst-proposed, verified worklist
+// (ADR-0002 / #22) as compact rows in the analyst's supplied order. Each row shows
+// exactly four fields — Topic title, ownership status, verified evidence summary,
+// and categorical impact — and the whole row is the only interaction: it opens the
+// Topic page. No Open button, no Start check, no signal chips, no numeric score.
 import { Card } from '../adapt'
-import { badge, chipForKind } from '../theme'
+import { badge, impactChip } from '../theme'
 
 const mono = "'JetBrains Mono', monospace"
 
@@ -19,95 +22,64 @@ export default function Dashboard({ topics, onOpen }: DashboardProps) {
             Ownership worklist
           </h1>
           <div style={{ color: 'var(--mut)', fontSize: 14, maxWidth: 620 }}>
-            Load-bearing decisions your coding agents shipped, ranked by how much they matter and how thinly you own
+            Load-bearing decisions your coding agents shipped, ordered by how much they matter and how thinly you own
             them. Ledger recommends checks — it never asserts the gap.
           </div>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {topics.map((t, i) => (
-            <div
-              key={t.id}
-              className="lg-hover-row"
-              onClick={t.isHero ? () => onOpen(t) : undefined}
-              style={{
-                border: '1px solid var(--bd)',
-                background: 'var(--panel)',
-                borderRadius: 11,
-                padding: '16px 18px',
-                cursor: t.isHero ? 'pointer' : 'default',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
-                <div
-                  style={{
-                    fontFamily: mono,
-                    fontSize: 13,
-                    color: 'var(--faint)',
-                    width: 20,
-                    flex: 'none',
-                    paddingTop: 1,
-                  }}
-                >
-                  {String(i + 1).padStart(2, '0')}
+          {topics.map((t) => {
+            const open = () => onOpen(t)
+            return (
+              <div
+                key={t.id}
+                className="lg-hover-row"
+                role="button"
+                tabIndex={0}
+                aria-label={`Open ${t.title}`}
+                onClick={open}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    open()
+                  }
+                }}
+                style={{
+                  border: '1px solid var(--bd)',
+                  background: 'var(--panel)',
+                  borderRadius: 11,
+                  padding: '16px 18px',
+                  cursor: 'pointer',
+                }}
+              >
+                {/* Field 1 (title) + Field 2 (ownership status) */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 15, fontWeight: 550, letterSpacing: '-0.01em' }}>{t.title}</span>
+                  <span style={{ ...badge(t.badge), ...(t.faint ? { opacity: 0.85 } : null) }}>{t.badgeLabel}</span>
                 </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 15, fontWeight: 550, letterSpacing: '-0.01em' }}>{t.title}</span>
-                    <span style={{ ...badge(t.badge), ...(t.faint ? { opacity: 0.85 } : null) }}>{t.badgeLabel}</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', marginTop: 11 }}>
-                    {t.chips.map((c, ci) => (
-                      <span key={ci} style={chipForKind(c.k)}>
-                        {c.label}
-                      </span>
-                    ))}
-                  </div>
+                {/* Field 3 (evidence summary) + Field 4 (impact level) */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 11 }}>
+                  <span style={{ flex: 1, minWidth: 0, fontFamily: mono, fontSize: 12, color: 'var(--mut)' }}>
+                    {t.evidenceSummary}
+                  </span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 7, flex: 'none' }}>
+                    <span
+                      style={{
+                        fontFamily: mono,
+                        fontSize: 10,
+                        letterSpacing: '0.06em',
+                        textTransform: 'uppercase',
+                        color: 'var(--faint)',
+                      }}
+                    >
+                      Impact
+                    </span>
+                    <span style={impactChip(t.impact)}>{t.impact}</span>
+                  </span>
                 </div>
-                {t.isHero && (
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      color: 'var(--accent)',
-                      fontSize: 13,
-                      fontWeight: 500,
-                      flex: 'none',
-                      paddingTop: 2,
-                    }}
-                  >
-                    Open <span style={{ fontSize: 15 }}>→</span>
-                  </div>
-                )}
               </div>
-              {t.expanded && (
-                <div
-                  style={{
-                    marginTop: 14,
-                    paddingTop: 13,
-                    borderTop: '1px solid var(--bd)',
-                    display: 'flex',
-                    gap: 10,
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: '50%',
-                      background: 'var(--accent)',
-                      marginTop: 7,
-                      flex: 'none',
-                    }}
-                  />
-                  <div style={{ fontSize: 13, color: 'var(--mut)', lineHeight: 1.6 }}>
-                    <span style={{ color: 'var(--tx)', fontWeight: 500 }}>Why it's #1.</span> {t.why}
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
+            )
+          })}
         </div>
 
         <div
