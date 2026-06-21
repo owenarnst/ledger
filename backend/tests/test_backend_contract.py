@@ -7,7 +7,7 @@ from backend import exercise_generation
 from backend.__main__ import main
 from backend.api import create_app
 from backend.db import connect
-from backend.hooks import HookSpool, build_session_start_nudge, reset_ledger
+from backend.hooks import HookSpool, build_session_start_nudge, reset_ledger, session_start
 from backend.ingestion import ClaudeCodeAdapter, GitAdapter
 from backend.repository import LedgerRepository
 
@@ -508,19 +508,45 @@ def test_hook_spool_drains_fifo_json_events(tmp_path):
     assert spool.pending_count() == 0
 
 
-def test_session_start_nudge_reports_ready_checks(tmp_path):
+def test_session_start_nudge_lists_ready_checks_with_deep_links(tmp_path):
     repo_path = tmp_path / "docs-search-api"
     repo_path.mkdir()
     repo = LedgerRepository(tmp_path / "ledger.db")
     repo.initialize()
 
-    line = build_session_start_nudge(repo, cwd=repo_path, base_url="http://127.0.0.1:4317")
+    message = build_session_start_nudge(repo, cwd=repo_path, base_url="http://127.0.0.1:4317")
 
-    assert line == (
-        "Ledger: 3 checks ready for docs-search-api. "
-        "If Claude just helped with a complex change, this is a good moment to test your understanding. "
-        "Open http://127.0.0.1:4317/p/docs-search-api"
+    # Summary header reports the ready count and project slug.
+    assert message.splitlines()[0].startswith("Ledger: 3 checks ready for docs-search-api")
+    # Each actionable topic gets a deep link to its topic page (no check is created).
+    for topic in repo.list_topics("docs-search-api"):
+        url = f"http://127.0.0.1:4317/p/docs-search-api/topics/{topic['id']}"
+        assert topic["title"] in message
+        assert url in message
+    # The worklist URL is offered as the catch-all.
+    assert "Open the worklist: http://127.0.0.1:4317/p/docs-search-api" in message
+
+
+def test_session_start_envelope_includes_deep_links(tmp_path):
+    repo_path = tmp_path / "docs-search-api"
+    repo_path.mkdir()
+    repo = LedgerRepository(tmp_path / "ledger.db")
+    repo.initialize()
+
+    result = session_start(
+        repo,
+        cwd=repo_path,
+        base_url="http://127.0.0.1:4317",
+        spool_dir=tmp_path / "spool",
     )
+
+    envelope = result["envelope"]["hookSpecificOutput"]
+    assert envelope["hookEventName"] == "SessionStart"
+    assert envelope["sessionTitle"] == "Ledger: 3 checks ready"
+    context = envelope["additionalContext"]
+    assert "surface this to the user" in context
+    for topic in repo.list_topics("docs-search-api"):
+        assert f"http://127.0.0.1:4317/p/docs-search-api/topics/{topic['id']}" in context
 
 
 def test_reset_ledger_recreates_database_and_clears_spool(tmp_path):
@@ -550,3 +576,4 @@ def test_cli_reset_and_nudge_commands(tmp_path, capsys):
     output = capsys.readouterr().out
     assert "Reset Ledger at" in output
     assert "Ledger: 3 checks ready for docs-search-api" in output
+    assert "http://ledger.local/p/docs-search-api/topics/" in output

@@ -8,7 +8,8 @@ import Dashboard from './screens/Dashboard'
 import Topic from './screens/Topic'
 import Workspace from './screens/Workspace'
 import * as api from './api'
-import { toCards, isActionable, testPathFor, Card } from './adapt'
+import { toCards, isReady, testPathFor, Card } from './adapt'
+import { parseRoute, buildPath, type Route } from './routing'
 
 const mono = "'JetBrains Mono', monospace"
 
@@ -211,30 +212,47 @@ export default function App() {
     codeRef.current = code
   }, [code])
 
-  // initial load: pick one project and show only its worklist. A real enrolled
-  // repo wins over the disclosed demo so the rail and the worklist always agree
-  // on which project is in view (there is no project switcher yet).
-  useEffect(() => {
-    let alive = true
-    ;(async () => {
-      try {
-        const projects = await api.listProjects()
-        const chosen = projects.find((p) => !p.is_demo) || projects[0] || null
-        if (!alive) return
-        setProject(chosen)
-        const topics = chosen ? await api.listProjectTopics(chosen.slug) : []
-        if (!alive) return
-        setCards(toCards(topics))
-      } catch (e) {
-        if (alive) setLoadError(e instanceof Error ? e.message : String(e))
-      } finally {
-        if (alive) setLoading(false)
+  // Load the project + worklist (and a topic, for a topic route) the current URL
+  // points at. When the URL names no project, a real enrolled repo wins over the
+  // disclosed demo so the rail and worklist always agree on which project is in
+  // view. A topic route lands on the topic page (where difficulty is chosen); no
+  // check is created here — that matches the read-only SessionStart deep link.
+  const applyRoute = useCallback(async (route: Route) => {
+    try {
+      const projects = await api.listProjects()
+      const chosen =
+        projects.find((p) => route.slug && p.slug === route.slug) ||
+        projects.find((p) => !p.is_demo) ||
+        projects[0] ||
+        null
+      setProject(chosen)
+      const topics = chosen ? await api.listProjectTopics(chosen.slug) : []
+      setCards(toCards(topics))
+      if (route.screen === 'topic') {
+        try {
+          setTopicDetail(await api.getTopic(route.topicId))
+          setScreen('topic')
+          return
+        } catch (_) {
+          /* unknown topic id — fall through to the worklist */
+        }
       }
-    })()
-    return () => {
-      alive = false
+      setScreen('dashboard')
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
     }
   }, [])
+
+  // First paint resolves the deep link the SessionStart nudge produced; popstate
+  // keeps the view in sync with browser back/forward.
+  useEffect(() => {
+    applyRoute(parseRoute(window.location.pathname))
+    const onPop = () => applyRoute(parseRoute(window.location.pathname))
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [applyRoute])
 
   // restore persisted pane widths
   useEffect(() => {
@@ -252,13 +270,25 @@ export default function App() {
       const detail = await api.getTopic(card.id)
       setTopicDetail(detail)
       setScreen('topic')
+      if (project) {
+        window.history.pushState({}, '', buildPath({ screen: 'topic', slug: project.slug, topicId: card.id }))
+      }
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e))
     }
-  }, [])
+  }, [project])
 
-  const backToWorklist = useCallback(() => setScreen('dashboard'), [])
-  const exitCheck = useCallback(() => setScreen('topic'), [])
+  const backToWorklist = useCallback(() => {
+    setScreen('dashboard')
+    if (project) window.history.pushState({}, '', buildPath({ screen: 'dashboard', slug: project.slug }))
+  }, [project])
+  // Exiting a check returns to its topic page — keep the URL on that topic.
+  const exitCheck = useCallback(() => {
+    setScreen('topic')
+    if (project && topicDetail) {
+      window.history.pushState({}, '', buildPath({ screen: 'topic', slug: project.slug, topicId: topicDetail.id }))
+    }
+  }, [project, topicDetail])
 
   // ---- check lifecycle ----
   const startCheck = useCallback(async (difficulty: api.Difficulty = 'hard') => {
@@ -551,9 +581,9 @@ export default function App() {
   )
 
   // ---- derive ----
-  // A check is "ready" only when the Topic both wants one and has a recipe —
-  // the same rule the backend's SessionStart nudge counts.
-  const readyCount = cards.filter((c) => isActionable(c.raw.state) && !!c.raw.checkable).length
+  // "Ready" = the Topic is in a ready lifecycle state — the same set
+  // (READY_STATES) the backend's SessionStart nudge counts and links to.
+  const readyCount = cards.filter((c) => isReady(c.raw.state)).length
   const projectName = project?.name || ''
   const heroPracticed = topicDetail?.state === 'practiced'
   const showRail = screen !== 'workspace'

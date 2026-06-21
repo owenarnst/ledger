@@ -16,11 +16,19 @@ const STATE_BADGE_KIND: Record<string, { kind: string; faint?: boolean }> = {
   practiced: { kind: 'practiced', faint: true },
 }
 
-// States where an ownership check would be offered, *if* the Topic also carries
-// a curated recipe (topic.checkable). Used by the rail's "checks ready" count.
+// States where an ownership check would be offered (including one already
+// underway). Broader than the rail's "ready" count — see isReady.
 const ACTIONABLE = new Set(['check_recommended', 'code_changed_since_practice', 'in_progress'])
 
 export const isActionable = (state: string): boolean => ACTIONABLE.has(state)
+
+// States the backend's SessionStart nudge counts as "ready" (READY_STATES in
+// backend/hooks.py): a check is recommended and not yet underway. Excludes
+// in_progress, which isActionable includes. The rail's "checks ready" count uses
+// this so it matches the session-start message exactly.
+const READY = new Set(['check_recommended', 'code_changed_since_practice'])
+
+export const isReady = (state: string): boolean => READY.has(state)
 
 // Ownership-status badge color (theme.badge kind) + faintness for a lifecycle
 // state. The label itself is the backend's derived ownership_status.

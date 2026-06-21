@@ -55,9 +55,6 @@ export interface Topic {
   ownership_status: string
   impact_level: string
   evidence_summary: string
-  // 1 when the backend has a curated check recipe for this Topic; only then is
-  // a Check offered (the backend refuses create_check otherwise).
-  checkable?: number
 }
 
 // One immutable Evidence record grounding a Topic. Code anchors carry no provider;

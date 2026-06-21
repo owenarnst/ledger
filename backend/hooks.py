@@ -57,14 +57,29 @@ class HookSpool:
         return len(list(self.spool_dir.glob("*.json")))
 
 
+# States where an ownership check is offered — the same set the worklist UI treats
+# as actionable. These are the topics worth surfacing (with deep links) at session start.
+READY_STATES = {"check_recommended", "code_changed_since_practice"}
+
+# Cap the per-topic list in the session-start message so a busy repo doesn't flood
+# the first reply; the worklist URL covers the overflow.
+MAX_LISTED_CHECKS = 5
+
+
+def _topic_url(base_url: str, slug: str, topic_id: str) -> str:
+    """Deep link to a topic page, where the user picks difficulty. No check is
+    created here — session start stays read-only (the check is minted on demand)."""
+    return f"{base_url}/p/{slug}/topics/{topic_id}"
+
+
 def build_session_start_nudge(
     repo: LedgerRepository,
     *,
     cwd: str | Path,
     base_url: str = DEFAULT_BASE_URL,
 ) -> str:
-    line, _ = _nudge_details(repo, cwd=cwd, base_url=base_url)
-    return line
+    message, _ = _nudge_details(repo, cwd=cwd, base_url=base_url)
+    return message
 
 
 def _nudge_details(
@@ -73,16 +88,33 @@ def _nudge_details(
     cwd: str | Path,
     base_url: str = DEFAULT_BASE_URL,
 ) -> tuple[str, int]:
+    """Build the human-facing session-start message — a one-line summary plus a
+    deep link per actionable check — and return it with the ready count."""
     project = repo.initialize_project_from_repo(cwd)
-    topics = repo.list_topics(project["slug"])
-    ready_states = {"check_recommended", "code_changed_since_practice"}
-    ready = sum(1 for topic in topics if topic["state"] in ready_states)
-    line = (
-        f"Ledger: {ready} checks ready for {project['slug']}. "
-        "If Claude just helped with a complex change, this is a good moment to test your understanding. "
-        f"Open {base_url}/p/{project['slug']}"
-    )
-    return line, ready
+    slug = project["slug"]
+    worklist_url = f"{base_url}/p/{slug}"
+    actionable = [t for t in repo.list_topics(slug) if t["state"] in READY_STATES]
+    ready = len(actionable)
+
+    if ready == 0:
+        return (
+            f"Ledger: no checks ready for {slug} right now. "
+            f"Open the worklist: {worklist_url}",
+            ready,
+        )
+
+    noun = "check" if ready == 1 else "checks"
+    lines = [
+        f"Ledger: {ready} {noun} ready for {slug} — "
+        "a good moment to test your understanding of recent changes:"
+    ]
+    for topic in actionable[:MAX_LISTED_CHECKS]:
+        lines.append(f"  • {topic['title']} → {_topic_url(base_url, slug, topic['id'])}")
+    overflow = ready - MAX_LISTED_CHECKS
+    if overflow > 0:
+        lines.append(f"  • +{overflow} more")
+    lines.append(f"Open the worklist: {worklist_url}")
+    return "\n".join(lines), ready
 
 
 def spool_commit(cwd: str | Path, *, spool_dir: str | Path = DEFAULT_SPOOL_DIR) -> Path:
@@ -112,18 +144,19 @@ def session_start(
     HEAD, and returns the nudge + the hookSpecificOutput envelope Claude Code expects."""
     drained = drain_spool(repo, spool_dir=spool_dir)
     reconciled = repo.reconcile_head(cwd, _git(cwd, "rev-parse", "HEAD"))
-    line, ready = _nudge_details(repo, cwd=cwd, base_url=base_url)
+    message, ready = _nudge_details(repo, cwd=cwd, base_url=base_url)
     envelope = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
             "additionalContext": (
-                f"[Ledger] {line}. This is a session-start notification — "
-                f"surface it to the user verbatim at the start of your first reply."
+                f"{message}\n\n"
+                "(Session-start notification from Ledger — surface this to the user, "
+                "including the links, at the start of your first reply.)"
             ),
             "sessionTitle": f"Ledger: {ready} checks ready",
         }
     }
-    return {"line": line, "ready": ready, "drained": drained["imported"], "reconciled": reconciled, "envelope": envelope}
+    return {"line": message, "ready": ready, "drained": drained["imported"], "reconciled": reconciled, "envelope": envelope}
 
 
 def install_hooks(
