@@ -77,7 +77,11 @@ def _nudge_details(
     topics = repo.list_topics(project["slug"])
     ready_states = {"check_recommended", "code_changed_since_practice"}
     ready = sum(1 for topic in topics if topic["state"] in ready_states)
-    line = f"Ledger: {ready} checks ready for {project['slug']} · Open {base_url}/p/{project['slug']}"
+    line = (
+        f"Ledger: {ready} checks ready for {project['slug']}. "
+        "If Claude just helped with a complex change, this is a good moment to test your understanding. "
+        f"Open {base_url}/p/{project['slug']}"
+    )
     return line, ready
 
 

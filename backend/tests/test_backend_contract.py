@@ -432,7 +432,11 @@ def test_session_start_nudge_reports_ready_checks(tmp_path):
 
     line = build_session_start_nudge(repo, cwd=repo_path, base_url="http://127.0.0.1:4317")
 
-    assert line == "Ledger: 3 checks ready for docs-search-api · Open http://127.0.0.1:4317/p/docs-search-api"
+    assert line == (
+        "Ledger: 3 checks ready for docs-search-api. "
+        "If Claude just helped with a complex change, this is a good moment to test your understanding. "
+        "Open http://127.0.0.1:4317/p/docs-search-api"
+    )
 
 
 def test_reset_ledger_recreates_database_and_clears_spool(tmp_path):
