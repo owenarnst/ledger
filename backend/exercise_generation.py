@@ -62,9 +62,9 @@ def build_generation_prompt(*, topic: dict[str, Any], revision: dict[str, Any], 
     if difficulty == "medium":
         medium_rule = (
             "For medium difficulty, include 1-2 multiple_choice questions before the sandbox. "
-            "They may ask about concepts, invariants, failure causes, or one aspect of a fix, "
-            "but no choice may contain a complete function, complete implementation, direct patch, "
-            "or full replacement code."
+            "These questions are implementation hints for the final sandbox problem: they may ask the "
+            "learner to identify the right implementation approach or choose between complete code options. "
+            "The MCQ is not the final answer; after answering, the learner must still write the fix in the sandbox."
         )
     if difficulty == "easy":
         medium_rule = (
@@ -154,8 +154,6 @@ def normalize_generated_plan(plan: dict[str, Any], *, difficulty: str) -> dict[s
             raise ValueError("generated question correct_index is invalid")
         if not question.get("prompt") or not question.get("rationale"):
             raise ValueError("generated question missing prompt or rationale")
-        if difficulty == "medium" and contains_complete_code_answer(question):
-            raise ValueError("medium generated question exposes a complete implementation")
     for step in steps:
         if step.get("type") == "multiple_choice" and step.get("question_id") not in question_ids:
             raise ValueError("generated multiple_choice step references unknown question")
@@ -166,8 +164,3 @@ def normalize_generated_plan(plan: dict[str, Any], *, difficulty: str) -> dict[s
     if difficulty == "medium" and not any(step.get("type") == "sandbox" for step in steps):
         raise ValueError("medium generated plan must include sandbox")
     return plan
-
-
-def contains_complete_code_answer(question: dict[str, Any]) -> bool:
-    text = "\n".join([question.get("prompt", ""), *[str(choice) for choice in question.get("choices", [])]])
-    return "def visible_documents_for_tenant" in text or re.search(r"\breturn\s+\[.*for .* in .* if ", text, re.S) is not None

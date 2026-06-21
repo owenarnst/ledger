@@ -28,7 +28,7 @@ class FakeExerciseGenerator:
                 "difficulty": "medium",
                 "steps": [
                     {"type": "multiple_choice", "question_id": "tenant-filter-purpose"},
-                    {"type": "multiple_choice", "question_id": "tenant-filter-aspect"},
+                    {"type": "multiple_choice", "question_id": "tenant-filter-implementation"},
                     {"type": "sandbox"},
                 ],
                 "questions": [
@@ -41,12 +41,16 @@ class FakeExerciseGenerator:
                         "rationale": "The invariant is tenant isolation.",
                     },
                     {
-                        "id": "tenant-filter-aspect",
+                        "id": "tenant-filter-implementation",
                         "kind": "debugging",
-                        "prompt": "Which input should the conditional compare each document against?",
-                        "choices": ["tenant_id", "score", "text"],
+                        "prompt": "Which implementation direction would fix the sandbox task?",
+                        "choices": [
+                            "def visible_documents_for_tenant(documents: list[Document], tenant_id: str) -> list[Document]:\n    return [doc for doc in documents if doc.tenant_id == tenant_id]",
+                            "def visible_documents_for_tenant(documents: list[Document], tenant_id: str) -> list[Document]:\n    return list(documents)",
+                            "def visible_documents_for_tenant(documents: list[Document], tenant_id: str) -> list[Document]:\n    return sorted(documents, key=lambda doc: doc.score, reverse=True)",
+                        ],
                         "correct_index": 0,
-                        "rationale": "The filter condition should compare document tenant identity to the requested tenant.",
+                        "rationale": "This points at the tenant filter the learner still needs to implement in the sandbox.",
                     },
                 ],
             }
@@ -190,7 +194,7 @@ def test_easy_check_returns_multiple_choice_only_plan(tmp_path):
     assert "\n    return " in check["plan"]["questions"][1]["choices"][0]
 
 
-def test_medium_check_uses_generated_aspect_questions_then_sandbox_plan(tmp_path):
+def test_medium_check_uses_generated_implementation_hint_then_sandbox_plan(tmp_path):
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes", exercise_generator=FakeExerciseGenerator())
     repo.initialize()
 
@@ -200,10 +204,10 @@ def test_medium_check_uses_generated_aspect_questions_then_sandbox_plan(tmp_path
     assert check["template_id"] == "generated-medium"
     assert [step["type"] for step in check["plan"]["steps"]] == ["multiple_choice", "multiple_choice", "sandbox"]
     assert check["plan"]["steps"][0]["question_id"] == "tenant-filter-purpose"
-    assert check["plan"]["steps"][1]["question_id"] == "tenant-filter-aspect"
+    assert check["plan"]["steps"][1]["question_id"] == "tenant-filter-implementation"
     assert check["plan"]["questions"][0]["kind"] == "concept"
     assert check["plan"]["questions"][1]["kind"] == "debugging"
-    assert "def visible_documents_for_tenant" not in str(check["plan"])
+    assert check["plan"]["questions"][1]["choices"][0].startswith("def visible_documents_for_tenant")
 
 
 def test_generated_exercise_plan_is_stored_and_reused(tmp_path):
