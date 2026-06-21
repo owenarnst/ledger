@@ -179,6 +179,8 @@ export default function App() {
   const [thread, setThread] = useState<ThreadMessage[]>([])
   const [coachInput, setCoachInput] = useState('')
   const [coachProvider, setCoachProvider] = useState<'claude-code' | 'codex-exec'>('claude-code')
+  const [answers, setAnswers] = useState<Record<string, number>>({})
+  const [answerResults, setAnswerResults] = useState<api.AnswerResult[]>([])
   const [histStats, setHistStats] = useState<HistStats | null>(null)
   const [showLog, setShowLog] = useState(false)
 
@@ -239,7 +241,7 @@ export default function App() {
   const exitCheck = useCallback(() => setScreen('topic'), [])
 
   // ---- check lifecycle ----
-  const startCheck = useCallback(async () => {
+  const startCheck = useCallback(async (difficulty: api.Difficulty = 'hard') => {
     if (!topicDetail) return
     setScreen('workspace')
     setPhase('creating')
@@ -252,9 +254,11 @@ export default function App() {
     setFiles([])
     setCode('')
     setRoContent({})
+    setAnswers({})
+    setAnswerResults([])
     startTsRef.current = Date.now()
     try {
-      const created = await api.createCheck(topicDetail.id)
+      const created = await api.createCheck(topicDetail.id, difficulty)
       setCheck(created)
       const targetPath = created.target_file
       const targetFile = await api.readFile(created.id, targetPath)
@@ -394,6 +398,20 @@ export default function App() {
       setRunning(false)
     }
   }, [running, check])
+
+  const submitAnswers = useCallback(async () => {
+    if (!check) return
+    try {
+      const result = await api.submitAnswers(check.id, answers)
+      setAnswerResults(result.results)
+      if (result.passed && check.difficulty === 'easy') {
+        setPhase('pass')
+      }
+    } catch (e) {
+      setRunOutput(`Could not submit answers: ${e instanceof Error ? e.message : String(e)}`)
+      setPhase('error')
+    }
+  }, [check, answers])
 
   // ---- coach ----
   const pushCoach = useCallback(
@@ -558,7 +576,11 @@ export default function App() {
             onCoachKey={onCoachKey}
             sendCoach={sendCoach}
             askChip={pushCoach}
-            canComplete={phase === 'pass'}
+            answers={answers}
+            answerResults={answerResults}
+            onAnswer={(questionId, choiceIndex) => setAnswers((current) => ({ ...current, [questionId]: choiceIndex }))}
+            submitAnswers={submitAnswers}
+            canComplete={phase === 'pass' || (check?.difficulty === 'easy' && answerResults.length > 0 && answerResults.every((item) => item.correct))}
             completeCheck={completeCheck}
           />
         )}

@@ -67,11 +67,35 @@ export interface TopicDetail extends Topic {
   }
 }
 
+export type Difficulty = 'easy' | 'medium' | 'hard'
+
+export interface ExerciseQuestion {
+  id: string
+  kind: 'concept' | 'debugging'
+  prompt: string
+  choices: string[]
+}
+
+export interface ExerciseStep {
+  type: 'multiple_choice' | 'sandbox'
+  question_id?: string
+}
+
+export interface ExercisePlan {
+  difficulty: Difficulty
+  template_id: string
+  steps: ExerciseStep[]
+  questions: ExerciseQuestion[]
+}
+
 export interface Check {
   id: string
   topic_id: string
   target_file: string
   test_command: string
+  difficulty: Difficulty
+  template_id: string
+  plan: ExercisePlan
 }
 
 export interface FileContent {
@@ -93,6 +117,18 @@ export interface PseudocodeCommentsResponse {
   changed: boolean
 }
 
+export interface AnswerResult {
+  question_id: string
+  selected_index: number | null
+  correct: boolean
+  rationale: string
+}
+
+export interface SubmitAnswersResponse {
+  passed: boolean
+  results: AnswerResult[]
+}
+
 export interface Reflection {
   invariant: string
   rationale: string
@@ -102,7 +138,8 @@ export interface Reflection {
 export const listProjects = () => req<Project[]>('/api/projects')
 export const listTopics = () => req<Topic[]>('/api/topics')
 export const getTopic = (id: string) => req<TopicDetail>(`/api/topics/${cid(id)}`)
-export const createCheck = (topicId: string) => req<Check>(`/api/topics/${cid(topicId)}/checks`, { method: 'POST' })
+export const createCheck = (topicId: string, difficulty: Difficulty = 'hard') =>
+  req<Check>(`/api/topics/${cid(topicId)}/checks`, { method: 'POST', body: { difficulty } })
 export const getCheck = (checkId: string) => req<Check>(`/api/checks/${cid(checkId)}`)
 export const readFile = (checkId: string, filePath: string) => req<FileContent>(`/api/checks/${cid(checkId)}/files/${filePath}`)
 export const writeFile = (checkId: string, filePath: string, content: string) =>
@@ -112,5 +149,7 @@ export const askCoach = (checkId: string, question: string, provider?: string) =
   req<CoachResponse>(`/api/checks/${cid(checkId)}/coach`, { method: 'POST', body: { question, provider } })
 export const generatePseudocodeComments = (checkId: string, filePath: string) =>
   req<PseudocodeCommentsResponse>(`/api/checks/${cid(checkId)}/pseudocode-comments`, { method: 'POST', body: { file_path: filePath } })
+export const submitAnswers = (checkId: string, answers: Record<string, number>) =>
+  req<SubmitAnswersResponse>(`/api/checks/${cid(checkId)}/answers`, { method: 'POST', body: { answers } })
 export const completeCheck = (checkId: string, reflection?: Reflection) =>
   req<void>(`/api/checks/${cid(checkId)}/complete`, { method: 'POST', body: reflection ? { reflection } : {} })

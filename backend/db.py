@@ -121,6 +121,9 @@ CREATE TABLE IF NOT EXISTS checks (
     sandbox_path TEXT NOT NULL,
     target_file TEXT NOT NULL,
     test_command TEXT NOT NULL,
+    difficulty TEXT NOT NULL DEFAULT 'hard',
+    template_id TEXT NOT NULL DEFAULT 'tenant-cache-hard',
+    plan_json TEXT NOT NULL DEFAULT '{"difficulty":"hard","template_id":"tenant-cache-hard","steps":[{"type":"sandbox"}],"questions":[]}',
     started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at TEXT
 );
@@ -131,6 +134,16 @@ CREATE TABLE IF NOT EXISTS attempts (
     passed INTEGER NOT NULL,
     output TEXT NOT NULL,
     elapsed_ms INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS check_answers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_id TEXT NOT NULL REFERENCES checks(id),
+    question_id TEXT NOT NULL,
+    selected_index INTEGER,
+    correct INTEGER NOT NULL,
+    rationale TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -153,6 +166,9 @@ MIGRATIONS = [
     "ALTER TABLE evidence ADD COLUMN tool_sequence_json TEXT NOT NULL DEFAULT '[]'",
     "ALTER TABLE evidence ADD COLUMN link_confidence TEXT NOT NULL DEFAULT 'heuristic'",
     "ALTER TABLE reflections ADD COLUMN topic_revision_id TEXT REFERENCES topic_revisions(id)",
+    "ALTER TABLE checks ADD COLUMN difficulty TEXT NOT NULL DEFAULT 'hard'",
+    "ALTER TABLE checks ADD COLUMN template_id TEXT NOT NULL DEFAULT 'tenant-cache-hard'",
+    "ALTER TABLE checks ADD COLUMN plan_json TEXT NOT NULL DEFAULT '{\"difficulty\":\"hard\",\"template_id\":\"tenant-cache-hard\",\"steps\":[{\"type\":\"sandbox\"}],\"questions\":[]}'",
 ]
 
 

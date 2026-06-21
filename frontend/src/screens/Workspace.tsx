@@ -48,6 +48,10 @@ interface WorkspaceProps {
   onCoachKey: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
   sendCoach: () => void
   askChip: (q: string) => void
+  answers: Record<string, number>
+  answerResults: api.AnswerResult[]
+  onAnswer: (questionId: string, choiceIndex: number) => void
+  submitAnswers: () => void
   canComplete: boolean
   completeCheck: () => void
 }
@@ -114,6 +118,10 @@ export default function Workspace({
   onCoachKey,
   sendCoach,
   askChip,
+  answers,
+  answerResults,
+  onAnswer,
+  submitAnswers,
   canComplete,
   completeCheck,
 }: WorkspaceProps) {
@@ -130,6 +138,13 @@ export default function Workspace({
   const testContent = testFile ? roContent[testFile.path] || '' : ''
   const failingTest = (testContent.match(/def\s+(test_\w+)/) || [])[1] || (testFile ? testFile.name : '—')
   const invariant = topic?.current_revision?.invariant
+  const plan = check?.plan
+  const questionsById = new Map((plan?.questions || []).map((q) => [q.id, q]))
+  const mcSteps = (plan?.steps || []).filter((step) => step.type === 'multiple_choice')
+  const hasSandboxStep = (plan?.steps || []).some((step) => step.type === 'sandbox')
+  const easyMode = check?.difficulty === 'easy'
+  const allMcAnswered = mcSteps.every((step) => step.question_id && answers[step.question_id] !== undefined)
+  const canShowSandbox = !plan || check?.difficulty === 'hard' || (hasSandboxStep && (mcSteps.length === 0 || answerResults.length > 0))
 
   const runBtnStyle = {
     display: 'inline-flex',
@@ -221,7 +236,7 @@ export default function Workspace({
               <div style={{ flex: 'none', height: 38, borderBottom: '1px solid var(--bd)', background: 'var(--panel)', display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', fontFamily: mono, fontSize: 11.5, color: 'var(--mut)' }}>
                 <span style={{ opacity: 0.7 }}>▾</span>
                 {af?.name || activeFile || '—'}
-                {editable && (
+                {editable && canShowSandbox && !easyMode && (
                   <button
                     onClick={addPseudocodeComments}
                     disabled={pseudocodeRunning}
@@ -245,90 +260,171 @@ export default function Workspace({
                 )}
               </div>
 
-              {editable ? (
-                <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', background: '#141310', position: 'relative' }}>
-                  <div style={{ flex: 'none', width: 46, overflow: 'hidden', fontFamily: mono, fontSize: 13, lineHeight: '21px', color: '#46423a', userSelect: 'none', background: '#141310' }}>
-                    <div style={{ padding: '14px 0', textAlign: 'right', transform: `translateY(${-editorScroll.top}px)` }}>
-                      {lineNos.map((n: number) => (
-                        <div key={n} style={{ paddingRight: 12 }}>
-                          {n}
+              {mcSteps.length > 0 && (
+                <div className="lg-scroll" style={{ flex: easyMode ? 1 : 'none', maxHeight: easyMode ? undefined : 240, overflow: 'auto', borderBottom: '1px solid var(--bd)', background: 'var(--panel)', padding: 16 }}>
+                  <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--faint)', marginBottom: 10 }}>
+                    {check?.difficulty} check
+                  </div>
+                  {mcSteps.map((step) => {
+                    const q = step.question_id ? questionsById.get(step.question_id) : undefined
+                    if (!q) return null
+                    const result = answerResults.find((item) => item.question_id === q.id)
+                    return (
+                      <div key={q.id} style={{ border: '1px solid var(--bd2)', borderRadius: 10, padding: 13, marginBottom: 10, background: 'var(--bg)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 9 }}>
+                          <span style={{ fontFamily: mono, fontSize: 10, color: 'var(--accent)', border: '1px solid rgba(200,116,77,0.28)', borderRadius: 5, padding: '2px 6px' }}>{q.kind}</span>
+                          <div style={{ fontSize: 13.5, fontWeight: 600 }}>{q.prompt}</div>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0, position: 'relative', overflow: 'hidden' }}>
-                    <pre
-                      style={{
-                        position: 'absolute',
-                        inset: 0,
-                        margin: 0,
-                        padding: '14px 16px',
-                        fontFamily: mono,
-                        fontSize: 13,
-                        lineHeight: '21px',
-                        whiteSpace: 'pre',
-                        pointerEvents: 'none',
-                        minWidth: 'max-content',
-                        minHeight: '100%',
-                        transform: `translate(${-editorScroll.left}px, ${-editorScroll.top}px)`,
-                      }}
-                    >
-                      {hl(code, false)}
-                    </pre>
-                    <textarea
-                      className="lg-scroll"
-                      spellCheck="false"
-                      value={code}
-                      onChange={onCode}
-                      onScroll={(e) => setEditorScroll({ top: e.currentTarget.scrollTop, left: e.currentTarget.scrollLeft })}
-                      style={{
-                        position: 'absolute',
-                        inset: 0,
-                        margin: 0,
-                        padding: '14px 16px',
-                        fontFamily: mono,
-                        fontSize: 13,
-                        lineHeight: '21px',
-                        whiteSpace: 'pre',
-                        overflow: 'auto',
-                        border: 'none',
-                        outline: 'none',
-                        resize: 'none',
-                        background: 'transparent',
-                        color: 'transparent',
-                        caretColor: 'var(--tx)',
-                        tabSize: 4,
-                      }}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div className="lg-scroll" style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'auto', background: '#141310' }}>
-                  <div style={{ flex: 'none', width: 46, padding: '14px 0', textAlign: 'right', fontFamily: mono, fontSize: 13, lineHeight: '21px', color: '#3a362f', userSelect: 'none' }}>
-                    {roLineNos.map((n) => (
-                      <div key={n} style={{ paddingRight: 12 }}>
-                        {n}
+                        {q.choices.map((choice, index) => {
+                          const selected = answers[q.id] === index
+                          return (
+                            <button
+                              key={choice}
+                              onClick={() => onAnswer(q.id, index)}
+                              style={{
+                                display: 'block',
+                                width: '100%',
+                                textAlign: 'left',
+                                marginTop: 6,
+                                padding: '8px 10px',
+                                borderRadius: 8,
+                                border: `1px solid ${selected ? 'var(--accent)' : 'var(--bd2)'}`,
+                                background: selected ? 'rgba(200,116,77,0.12)' : 'var(--panel2)',
+                                color: 'var(--tx)',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {choice}
+                            </button>
+                          )
+                        })}
+                        {result && (
+                          <div style={{ marginTop: 9, color: result.correct ? 'var(--green)' : 'var(--red)', fontSize: 12.5, lineHeight: 1.45 }}>
+                            {result.correct ? 'Correct. ' : 'Not quite. '}
+                            <span style={{ color: 'var(--mut)' }}>{result.rationale}</span>
+                          </div>
+                        )}
                       </div>
-                    ))}
-                  </div>
-                  <pre style={{ margin: 0, padding: '14px 16px', fontFamily: mono, fontSize: 13, lineHeight: '21px', whiteSpace: 'pre', color: 'var(--mut)' }}>{hl(roText, true)}</pre>
+                    )
+                  })}
+                  <button
+                    onClick={submitAnswers}
+                    disabled={!allMcAnswered}
+                    style={{
+                      background: allMcAnswered ? 'var(--accent)' : 'rgba(200,116,77,0.35)',
+                      color: '#1c140f',
+                      border: 'none',
+                      borderRadius: 8,
+                      padding: '9px 14px',
+                      fontWeight: 600,
+                      cursor: allMcAnswered ? 'pointer' : 'default',
+                    }}
+                  >
+                    Check answers
+                  </button>
                 </div>
               )}
 
-              {/* run bar */}
-              <div style={{ flex: 'none', borderTop: '1px solid var(--bd)', background: 'var(--panel)', padding: '11px 16px', display: 'flex', alignItems: 'center', gap: 14 }}>
-                <button onClick={runChecks} disabled={running} style={runBtnStyle}>
-                  {running && <span style={{ width: 11, height: 11, border: '2px solid rgba(28,20,15,0.35)', borderTopColor: '#1c140f', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />}
-                  {running ? 'Running…' : 'Run checks'}
-                </button>
-                <div style={{ fontFamily: mono, fontSize: 11.5, color: 'var(--faint)' }}>exit code is the oracle · {check?.test_command || 'pytest'}</div>
-              </div>
+              {easyMode && (
+                <div style={{ flex: 'none', borderTop: '1px solid var(--bd)', background: 'var(--panel)', padding: '12px 16px', color: 'var(--mut)', fontFamily: mono, fontSize: 11.5 }}>
+                  Easy mode is multiple-choice only. Answer both questions to complete the check.
+                </div>
+              )}
 
-              {/* output */}
-              <div className="lg-scroll" style={{ flex: 'none', height: 200, borderTop: '1px solid var(--bd)', background: '#121110', overflow: 'auto' }}>
-                <div style={b.css}>{b.label}</div>
-                <pre style={{ margin: 0, padding: '12px 16px', fontFamily: mono, fontSize: 11.5, lineHeight: 1.65, color: 'var(--mut)', whiteSpace: 'pre-wrap' }}>{b.out}</pre>
-              </div>
+              {!canShowSandbox && !easyMode && (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mut)', fontFamily: mono, fontSize: 12 }}>
+                  Answer the guided question to unlock the sandbox.
+                </div>
+              )}
+
+              {canShowSandbox && !easyMode && (
+                <>
+                  {editable ? (
+                    <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', background: '#141310', position: 'relative' }}>
+                      <div style={{ flex: 'none', width: 46, overflow: 'hidden', fontFamily: mono, fontSize: 13, lineHeight: '21px', color: '#46423a', userSelect: 'none', background: '#141310' }}>
+                        <div style={{ padding: '14px 0', textAlign: 'right', transform: `translateY(${-editorScroll.top}px)` }}>
+                          {lineNos.map((n: number) => (
+                            <div key={n} style={{ paddingRight: 12 }}>
+                              {n}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0, position: 'relative', overflow: 'hidden' }}>
+                        <pre
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            margin: 0,
+                            padding: '14px 16px',
+                            fontFamily: mono,
+                            fontSize: 13,
+                            lineHeight: '21px',
+                            whiteSpace: 'pre',
+                            pointerEvents: 'none',
+                            minWidth: 'max-content',
+                            minHeight: '100%',
+                            transform: `translate(${-editorScroll.left}px, ${-editorScroll.top}px)`,
+                          }}
+                        >
+                          {hl(code, false)}
+                        </pre>
+                        <textarea
+                          className="lg-scroll"
+                          spellCheck="false"
+                          value={code}
+                          onChange={onCode}
+                          onScroll={(e) => setEditorScroll({ top: e.currentTarget.scrollTop, left: e.currentTarget.scrollLeft })}
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            margin: 0,
+                            padding: '14px 16px',
+                            fontFamily: mono,
+                            fontSize: 13,
+                            lineHeight: '21px',
+                            whiteSpace: 'pre',
+                            overflow: 'auto',
+                            border: 'none',
+                            outline: 'none',
+                            resize: 'none',
+                            background: 'transparent',
+                            color: 'transparent',
+                            caretColor: 'var(--tx)',
+                            tabSize: 4,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="lg-scroll" style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'auto', background: '#141310' }}>
+                      <div style={{ flex: 'none', width: 46, padding: '14px 0', textAlign: 'right', fontFamily: mono, fontSize: 13, lineHeight: '21px', color: '#3a362f', userSelect: 'none' }}>
+                        {roLineNos.map((n) => (
+                          <div key={n} style={{ paddingRight: 12 }}>
+                            {n}
+                          </div>
+                        ))}
+                      </div>
+                      <pre style={{ margin: 0, padding: '14px 16px', fontFamily: mono, fontSize: 13, lineHeight: '21px', whiteSpace: 'pre', color: 'var(--mut)' }}>{hl(roText, true)}</pre>
+                    </div>
+                  )}
+
+                  {/* run bar */}
+                  <div style={{ flex: 'none', borderTop: '1px solid var(--bd)', background: 'var(--panel)', padding: '11px 16px', display: 'flex', alignItems: 'center', gap: 14 }}>
+                    <button onClick={runChecks} disabled={running} style={runBtnStyle}>
+                      {running && <span style={{ width: 11, height: 11, border: '2px solid rgba(28,20,15,0.35)', borderTopColor: '#1c140f', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />}
+                      {running ? 'Running…' : 'Run checks'}
+                    </button>
+                    <div style={{ fontFamily: mono, fontSize: 11.5, color: 'var(--faint)' }}>exit code is the oracle · {check?.test_command || 'pytest'}</div>
+                  </div>
+
+                  {/* output */}
+                  <div className="lg-scroll" style={{ flex: 'none', height: 200, borderTop: '1px solid var(--bd)', background: '#121110', overflow: 'auto' }}>
+                    <div style={b.css}>{b.label}</div>
+                    <pre style={{ margin: 0, padding: '12px 16px', fontFamily: mono, fontSize: 11.5, lineHeight: 1.65, color: 'var(--mut)', whiteSpace: 'pre-wrap' }}>{b.out}</pre>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

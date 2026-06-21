@@ -99,6 +99,75 @@ def test_pseudocode_comments_remove_legacy_check_line_comments(tmp_path):
     assert "return list(documents)" in result["content"]
 
 
+def test_easy_check_returns_multiple_choice_only_plan(tmp_path):
+    repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
+    repo.initialize()
+
+    check = repo.create_check("tenant-cache-isolation", difficulty="easy")
+
+    assert check["difficulty"] == "easy"
+    assert check["template_id"] == "tenant-cache-easy"
+    assert [step["type"] for step in check["plan"]["steps"]] == ["multiple_choice", "multiple_choice"]
+    assert "correct_index" not in str(check["plan"])
+    assert check["plan"]["questions"][0]["kind"] == "concept"
+    assert check["plan"]["questions"][1]["kind"] == "debugging"
+
+
+def test_medium_check_returns_question_then_sandbox_plan(tmp_path):
+    repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
+    repo.initialize()
+
+    check = repo.create_check("tenant-cache-isolation", difficulty="medium")
+
+    assert check["difficulty"] == "medium"
+    assert check["template_id"] == "tenant-cache-medium"
+    assert [step["type"] for step in check["plan"]["steps"]] == ["multiple_choice", "sandbox"]
+
+
+def test_hard_check_keeps_current_sandbox_plan(tmp_path):
+    repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
+    repo.initialize()
+
+    check = repo.create_check("tenant-cache-isolation", difficulty="hard")
+
+    assert check["difficulty"] == "hard"
+    assert check["template_id"] == "tenant-cache-hard"
+    assert [step["type"] for step in check["plan"]["steps"]] == ["sandbox"]
+    assert check["target_file"] == "retrieval/rerank.py"
+
+
+def test_submit_check_answers_validates_easy_mode_server_side(tmp_path):
+    repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
+    repo.initialize()
+    check = repo.create_check("tenant-cache-isolation", difficulty="easy")
+
+    result = repo.submit_check_answers(
+        check["id"],
+        {
+            "tenant-filter-purpose": 0,
+            "tenant-filter-debug": 0,
+        },
+    )
+
+    assert result["passed"] is True
+    assert all(item["correct"] for item in result["results"])
+    assert "tenant isolation" in result["results"][0]["rationale"].lower()
+    assert repo.get_check(check["id"])["state"] == "completed"
+
+
+def test_submit_check_answers_records_wrong_answer(tmp_path):
+    repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
+    repo.initialize()
+    check = repo.create_check("tenant-cache-isolation", difficulty="easy")
+
+    result = repo.submit_check_answers(check["id"], {"tenant-filter-purpose": 1, "tenant-filter-debug": 0})
+
+    assert result["passed"] is False
+    assert result["results"][0]["correct"] is False
+    assert result["results"][0]["selected_index"] == 1
+    assert repo.get_check(check["id"])["state"] == "in_progress"
+
+
 def test_contract_alias_routes_are_registered(tmp_path):
     app = create_app(db_path=tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
     paths = {route.path for route in app.routes}
@@ -108,6 +177,7 @@ def test_contract_alias_routes_are_registered(tmp_path):
     assert "/api/coach" in paths
     assert "/api/reset" in paths
     assert "/api/checks/{check_id}/pseudocode-comments" in paths
+    assert "/api/checks/{check_id}/answers" in paths
     assert "/api/topics/{topic_id}/reflections" in paths
 
 

@@ -16,7 +16,7 @@ interface TopicProps {
   histStats: { elapsed: string; runs: number; concept: number } | null
   showLog: boolean
   onToggleLog: () => void
-  onStartCheck: () => void
+  onStartCheck: (difficulty: api.Difficulty) => void
   onBack: () => void
 }
 
@@ -25,7 +25,6 @@ export default function Topic({ detail, heroPracticed, histStats, showLog, onTog
   const canCheck = !!detail.current_revision
   const heroBadgeCss = heroPracticed ? badge('practiced') : badge('recommended')
   const heroBadgeLabel = heroPracticed ? 'Practiced' : 'Check recommended'
-  const heroCtaLabel = heroPracticed ? 'Practice again' : 'Start check'
   const callers = `${detail.caller_count} ${detail.caller_count === 1 ? 'caller' : 'callers'}`
 
   const hs = histStats || { elapsed: '—', runs: 0, concept: 0 }
@@ -63,25 +62,41 @@ export default function Topic({ detail, heroPracticed, histStats, showLog, onTog
               Ownership check recommended
             </div>
           </div>
-          <button
-            onClick={canCheck ? onStartCheck : undefined}
-            disabled={!canCheck}
-            style={{
-              flex: 'none',
-              background: canCheck ? 'var(--accent)' : 'var(--panel2)',
-              color: canCheck ? '#1c140f' : 'var(--faint)',
-              border: canCheck ? 'none' : '1px solid var(--bd2)',
-              borderRadius: 9,
-              padding: '11px 20px',
-              fontFamily: "'Geist', sans-serif",
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: canCheck ? 'pointer' : 'not-allowed',
-              boxShadow: canCheck ? '0 1px 0 rgba(0,0,0,0.2)' : 'none',
-            }}
-          >
-            {canCheck ? heroCtaLabel : 'No sandbox available'}
-          </button>
+          <div style={{ flex: 'none', display: 'flex', gap: 9, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {canCheck ? (
+              [
+                { difficulty: 'easy' as api.Difficulty, label: 'Easy: multiple choice' },
+                { difficulty: 'medium' as api.Difficulty, label: 'Medium: guided debug' },
+                { difficulty: 'hard' as api.Difficulty, label: heroPracticed ? 'Hard: practice again' : 'Hard: sandbox' },
+              ].map((item) => (
+                <button
+                  key={item.difficulty}
+                  onClick={() => onStartCheck(item.difficulty)}
+                  style={{
+                    background: item.difficulty === 'hard' ? 'var(--accent)' : 'var(--panel2)',
+                    color: item.difficulty === 'hard' ? '#1c140f' : 'var(--tx)',
+                    border: item.difficulty === 'hard' ? 'none' : '1px solid var(--bd2)',
+                    borderRadius: 9,
+                    padding: '10px 14px',
+                    fontFamily: "'Geist', sans-serif",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    boxShadow: item.difficulty === 'hard' ? '0 1px 0 rgba(0,0,0,0.2)' : 'none',
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))
+            ) : (
+              <button
+                disabled
+                style={{ background: 'var(--panel2)', color: 'var(--faint)', border: '1px solid var(--bd2)', borderRadius: 9, padding: '11px 20px', fontFamily: "'Geist', sans-serif", fontSize: 14, fontWeight: 600, cursor: 'not-allowed' }}
+              >
+                No sandbox available
+              </button>
+            )}
+          </div>
         </div>
 
         <div style={{ fontSize: 13.5, color: 'var(--mut)', marginBottom: 26, maxWidth: 680 }}>

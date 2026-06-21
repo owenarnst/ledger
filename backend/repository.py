@@ -8,6 +8,7 @@ from typing import Any
 
 from .coach import Coach, create_coach
 from .db import connect, initialize_schema
+from .exercise_templates import public_plan, template_for, validate_answers
 from .ingestion import DEFAULT_PROVIDER, IngestionEvent, adapter_for
 from .pseudocode import build_pseudocode_comments
 from .sandbox import create_hero_sandbox, run_pytest
@@ -354,8 +355,9 @@ class LedgerRepository:
                 raise KeyError(session_id)
             return dict(session)
 
-    def create_check(self, topic_id: str) -> dict[str, Any]:
+    def create_check(self, topic_id: str, difficulty: str | None = None) -> dict[str, Any]:
         check_id = uuid.uuid4().hex
+        template = template_for(topic_id, difficulty)
         sandbox_path = self.sandbox_root / check_id
         create_hero_sandbox(sandbox_path)
         with connect(self.db_path) as conn:
@@ -364,10 +366,19 @@ class LedgerRepository:
                 raise KeyError(topic_id)
             conn.execute(
                 """
-                INSERT INTO checks (id, topic_id, topic_revision_id, state, sandbox_path, target_file, test_command)
-                VALUES (?, ?, ?, 'in_progress', ?, 'retrieval/rerank.py', 'python -m pytest tests')
+                INSERT INTO checks
+                (id, topic_id, topic_revision_id, state, sandbox_path, target_file, test_command, difficulty, template_id, plan_json)
+                VALUES (?, ?, ?, 'in_progress', ?, 'retrieval/rerank.py', 'python -m pytest -s tests', ?, ?, ?)
                 """,
-                (check_id, topic_id, revision["id"], str(sandbox_path)),
+                (
+                    check_id,
+                    topic_id,
+                    revision["id"],
+                    str(sandbox_path),
+                    template["difficulty"],
+                    template["template_id"],
+                    json.dumps(template, sort_keys=True),
+                ),
             )
             conn.execute("UPDATE topics SET state = 'in_progress' WHERE id = ?", (topic_id,))
             conn.execute(
@@ -386,6 +397,9 @@ class LedgerRepository:
             if not check:
                 raise KeyError(check_id)
             payload = dict(check)
+            plan = json.loads(payload.get("plan_json") or "{}")
+            payload["plan"] = public_plan(plan)
+            payload.pop("plan_json", None)
             payload["run_count"] = conn.execute(
                 "SELECT COUNT(*) FROM attempts WHERE check_id = ?", (check_id,)
             ).fetchone()[0]
@@ -513,6 +527,37 @@ class LedgerRepository:
             reference_code=reference_path.read_text(),
             invariant=(topic.get("current_revision") or {}).get("invariant"),
         )
+
+    def submit_check_answers(self, check_id: str, answers: dict[str, int]) -> dict[str, Any]:
+        check = self.get_check(check_id)
+        with connect(self.db_path) as conn:
+            row = conn.execute("SELECT plan_json FROM checks WHERE id = ?", (check_id,)).fetchone()
+            if not row:
+                raise KeyError(check_id)
+            result = validate_answers(json.loads(row["plan_json"]), answers)
+            conn.executemany(
+                """
+                INSERT INTO check_answers (check_id, question_id, selected_index, correct, rationale)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        check_id,
+                        item["question_id"],
+                        item["selected_index"],
+                        int(item["correct"]),
+                        item["rationale"],
+                    )
+                    for item in result["results"]
+                ],
+            )
+            if result["passed"] and check["difficulty"] == "easy":
+                conn.execute(
+                    "UPDATE checks SET state = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (check_id,),
+                )
+            conn.commit()
+        return result
 
     def _latest_attempt_output(self, check_id: str) -> str:
         with connect(self.db_path) as conn:

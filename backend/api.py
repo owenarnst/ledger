@@ -24,8 +24,13 @@ class PseudocodeCommentsRequest(BaseModel):
     file_path: str
 
 
+class AnswerRequest(BaseModel):
+    answers: dict[str, int]
+
+
 class CheckRequest(BaseModel):
-    topic_id: str
+    topic_id: str | None = None
+    difficulty: str | None = None
 
 
 class ReflectionRequest(BaseModel):
@@ -135,17 +140,23 @@ def create_app(
 
     @app.post("/api/checks")
     def create_check_alias(payload: CheckRequest) -> dict:
+        if not payload.topic_id:
+            raise HTTPException(status_code=400, detail="topic_id is required")
         try:
-            return repo.create_check(payload.topic_id)
+            return repo.create_check(payload.topic_id, difficulty=payload.difficulty)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="topic not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/topics/{topic_id}/checks")
-    def create_check(topic_id: str) -> dict:
+    def create_check(topic_id: str, payload: CheckRequest | None = None) -> dict:
         try:
-            return repo.create_check(topic_id)
+            return repo.create_check(topic_id, difficulty=payload.difficulty if payload else None)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="topic not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/checks/{check_id}")
     def get_check(check_id: str) -> dict:
@@ -162,6 +173,15 @@ def create_app(
             raise HTTPException(status_code=404, detail="check not found") from exc
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="file not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/checks/{check_id}/answers")
+    def submit_answers(check_id: str, payload: AnswerRequest) -> dict:
+        try:
+            return repo.submit_check_answers(check_id, payload.answers)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="check not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
