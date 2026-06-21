@@ -57,6 +57,26 @@ export const toolChip: React.CSSProperties = {
   borderRadius: 5,
 }
 
+// Categorical impact pill (#23/#24). Calm and neutral — emphasis varies only by
+// text weight/brightness across High → Low; semantic red/green stays reserved for
+// test pass/fail (visual tone lock). Never a numeric score.
+export function impactChip(level: string): React.CSSProperties {
+  const base: React.CSSProperties = {
+    whiteSpace: 'nowrap',
+    fontFamily: "'Geist', sans-serif",
+    fontSize: 11.5,
+    fontWeight: 500,
+    padding: '3px 10px',
+    borderRadius: 7,
+    border: '1px solid var(--bd2)',
+    background: 'var(--panel2)',
+  }
+  const v = (level || '').toLowerCase()
+  if (v === 'high') return { ...base, color: 'var(--tx)' }
+  if (v === 'medium') return { ...base, color: 'var(--mut)' }
+  return { ...base, color: 'var(--faint)' }
+}
+
 export type ChipKind = 'claude' | 'codex' | 'risk' | 'plain'
 
 export function chipForKind(k: ChipKind): React.CSSProperties {

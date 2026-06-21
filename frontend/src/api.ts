@@ -47,23 +47,45 @@ export interface Topic {
   claude_authored: boolean
   provider: string
   why_now?: string
+  // Derived display facts the backend computes (ADR-0002 / #22) — never analyst
+  // claims. ownership_status comes from the persisted lifecycle; impact_level is
+  // the analyst value or a risk-class fallback; evidence_summary is built from the
+  // accepted Code-anchor / Development-trace counts (e.g. "4 code anchors · 1
+  // related Claude session").
+  ownership_status: string
+  impact_level: string
+  evidence_summary: string
   // 1 when the backend has a curated check recipe for this Topic; only then is
   // a Check offered (the backend refuses create_check otherwise).
   checkable?: number
 }
 
+// One immutable Evidence record grounding a Topic. Code anchors carry no provider;
+// development traces carry a Provider tag plus session/confidence provenance.
+export interface EvidenceRecord {
+  kind: string
+  title?: string
+  body?: string
+  provider?: string
+  tool_sequence?: string[]
+  source_path?: string | null
+  session_id?: string | null
+  link_confidence?: string | null
+  // Short analyst relevance statement and the deterministic excerpt hash, both
+  // verified server-side before the record is persisted (#22).
+  relevance?: string | null
+  excerpt_sha?: string | null
+}
+
 export interface TopicDetail extends Topic {
   summary?: string
-  evidence: Array<{
-    kind: string
-    title?: string
-    body?: string
-    provider?: string
-    tool_sequence?: string[]
-    source_path?: string | null
-    session_id?: string | null
-    link_confidence?: string | null
-  }>
+  // The maintenance-failure consequence behind the impact level (Topic page →
+  // "Why it matters"). Not a numeric score.
+  impact_consequence?: string
+  evidence: EvidenceRecord[]
+  // Backend-grouped Evidence for the expanded view's two provider-neutral groups.
+  code_anchors: EvidenceRecord[]
+  development_traces: EvidenceRecord[]
   current_revision?: {
     code_path: string
     invariant: string

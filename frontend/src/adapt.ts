@@ -2,130 +2,86 @@
 // the source of truth (docs/planning/backend-topic-initialization-note.md); the
 // frontend never invents topics, providers, or risk semantics — it relabels.
 
-import { Topic, TopicDetail } from './api'
-import { ChipKind } from './theme'
+import { Topic } from './api'
 
-const STATE_BADGE: Record<string, { badge: string; badgeLabel: string; faint?: boolean }> = {
-  check_recommended: { badge: 'recommended', badgeLabel: 'Check recommended' },
-  code_changed_since_practice: { badge: 'changed', badgeLabel: 'Code changed since practice' },
-  practiced: { badge: 'practiced', badgeLabel: 'Practiced', faint: true },
-  in_progress: { badge: 'recommended', badgeLabel: 'In progress' },
+// Lifecycle state → ownership-status badge color (theme.badge kind) + faintness.
+// The human-readable label itself comes from the backend's derived
+// ownership_status; this map only chooses the calm, non-alarm color (#23 / visual
+// tone lock — semantic red/green is reserved for test pass/fail).
+const STATE_BADGE_KIND: Record<string, { kind: string; faint?: boolean }> = {
+  check_recommended: { kind: 'recommended' },
+  in_progress: { kind: 'recommended' },
+  revisit_suggested: { kind: 'changed' },
+  code_changed_since_practice: { kind: 'changed' },
+  practiced: { kind: 'practiced', faint: true },
 }
 
 // States where an ownership check would be offered, *if* the Topic also carries
-// a curated recipe (topic.checkable). The first topic that is both actionable
-// and checkable becomes the demo hero — the one the backend can sandbox.
+// a curated recipe (topic.checkable). Used by the rail's "checks ready" count.
 const ACTIONABLE = new Set(['check_recommended', 'code_changed_since_practice', 'in_progress'])
 
 export const isActionable = (state: string): boolean => ACTIONABLE.has(state)
+
+// Ownership-status badge color (theme.badge kind) + faintness for a lifecycle
+// state. The label itself is the backend's derived ownership_status.
+export function statusBadge(state: string): { kind: string; faint: boolean } {
+  const sb = STATE_BADGE_KIND[state] || { kind: 'recommended' }
+  return { kind: sb.kind, faint: !!sb.faint }
+}
 
 // Risk class is shown verbatim (underscores → hyphens). We do not translate the
 // backend's risk taxonomy into friendlier-but-invented labels.
 export const riskLabel = (rc: string): string => (rc || '').replace(/_/g, '-')
 
-export interface Chip {
-  label: string
-  k: ChipKind
+// Categorical impact label — High / Medium / Low, never a numeric score (#23).
+export function impactLabel(level: string): string {
+  const v = (level || '').toLowerCase()
+  if (v === 'high' || v === 'medium' || v === 'low') return v[0].toUpperCase() + v.slice(1)
+  return v ? v[0].toUpperCase() + v.slice(1) : '—'
 }
 
-export function providerChip(topic: Topic): Chip | null {
-  if (topic.claude_authored) return { label: '✳ Claude-authored', k: 'claude' }
-  if (topic.provider === 'codex') return { label: '⬡ Codex-authored', k: 'codex' }
-  return null
-}
-
-export function badgeForState(state: string) {
-  return STATE_BADGE[state] || { badge: 'recommended', badgeLabel: state }
-}
-
+// One verified-worklist row. Exactly four display fields (#23): the durable Topic
+// title, the ownership-status badge, the verified evidence summary, and the
+// categorical impact level. No signal chips, score, rank rationale, or why-expansion.
 export interface Card {
   id: string
   title: string
   badge: string
   badgeLabel: string
   faint: boolean
-  isHero: boolean
-  expanded: boolean
-  why: string
-  chips: Chip[]
+  evidenceSummary: string
+  impact: string
   raw: Topic
 }
 
-// topics arrive ordered by rank. The first actionable one becomes the hero.
+// Topics arrive in the analyst's order; the row preserves that order verbatim.
 export function toCards(topics: Topic[]): Card[] {
-  let heroTaken = false
   return topics.map((t) => {
-    const sb = badgeForState(t.state)
-    const isHero = !heroTaken && ACTIONABLE.has(t.state) && !!t.checkable
-    if (isHero) heroTaken = true
-    const callers = `${t.caller_count} ${t.caller_count === 1 ? 'caller' : 'callers'}`
-    const chips = [
-      { label: callers, k: 'plain' },
-      { label: `risk: ${riskLabel(t.risk_class)}`, k: 'risk' },
-      providerChip(t),
-    ].filter(Boolean) as Chip[]
+    const sb = STATE_BADGE_KIND[t.state] || { kind: 'recommended' }
     return {
       id: t.id,
       title: t.title,
-      badge: sb.badge,
-      badgeLabel: sb.badgeLabel,
+      badge: sb.kind,
+      badgeLabel: t.ownership_status || t.state.replace(/_/g, ' '),
       faint: !!sb.faint,
-      isHero,
-      expanded: isHero,
-      why: t.why_now || '',
-      chips,
+      evidenceSummary: t.evidence_summary || '',
+      impact: impactLabel(t.impact_level),
       raw: t,
     }
   })
 }
 
-const RECEIPT_PROVIDER: Record<string, { label: string; chip: string }> = {
-  claude_code: { label: '✳ Claude', chip: 'claude' },
-  codex: { label: '⬡ Codex', chip: 'codex' },
+// Human label for a Development-trace's Provider tag. The expanded view is
+// provider-neutral in layout (#24); the label only states the actual Provider that
+// authored the trace. Falls back to a title-cased form, never to a fake "Claude".
+const TRACE_PROVIDER: Record<string, string> = {
+  claude_code: 'Claude Code',
+  codex: 'Codex',
 }
 
-export interface Receipt {
-  code: any
-  receipt: any
-  trail: any
-  // True only when a real conversation receipt grounds this Topic. Extracted
-  // topics carry code + trail evidence but no session link, so the UI must not
-  // imply an authoring receipt it doesn't have.
-  hasReceipt: boolean
-  provider: string
-  providerLabel: string
-  providerChipKind: string
-  toolSequence: string[]
-  sourcePath: string | null
-  sessionId: string | null
-  linkConfidence: string | null
-  codePath: string
-  invariant: string
-}
-
-// Pull the authoring-receipt view out of a topic detail's evidence list.
-export function deriveReceipt(detail: TopicDetail): Receipt {
-  const ev = detail.evidence || []
-  const code = ev.find((e) => e.kind === 'code') || null
-  const receipt = ev.find((e) => /_receipt$/.test(e.kind)) || null
-  const trail = ev.find((e) => e.kind === 'missing_reasoning') || null
-  const provider = receipt?.provider || detail.provider || 'claude_code'
-  const pm = RECEIPT_PROVIDER[provider] || { label: provider, chip: 'plain' }
-  return {
-    code,
-    receipt,
-    trail,
-    hasReceipt: !!receipt,
-    provider,
-    providerLabel: pm.label,
-    providerChipKind: pm.chip,
-    toolSequence: receipt?.tool_sequence || [],
-    sourcePath: receipt?.source_path || null,
-    sessionId: receipt?.session_id || null,
-    linkConfidence: receipt?.link_confidence || null,
-    codePath: detail.current_revision?.code_path || code?.title || '',
-    invariant: detail.current_revision?.invariant || '',
-  }
+export function providerLabel(provider?: string | null): string {
+  if (!provider) return 'Session'
+  return TRACE_PROVIDER[provider] || provider.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 // Derive the read-only companion test path from a check's editable target.

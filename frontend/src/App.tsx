@@ -201,7 +201,6 @@ export default function App() {
   const [answers, setAnswers] = useState<Record<string, number>>({})
   const [answerResults, setAnswerResults] = useState<api.AnswerResult[]>([])
   const [histStats, setHistStats] = useState<HistStats | null>(null)
-  const [showLog, setShowLog] = useState(false)
 
   const [taskW, setTaskW] = useState(280)
   const [coachW, setCoachW] = useState(372)
@@ -250,7 +249,6 @@ export default function App() {
 
   // ---- navigation ----
   const openTopic = useCallback(async (card: Card) => {
-    setShowLog(false)
     try {
       const detail = await api.getTopic(card.id)
       setTopicDetail(detail)
@@ -261,7 +259,6 @@ export default function App() {
   }, [])
 
   const backToWorklist = useCallback(() => setScreen('dashboard'), [])
-  const toggleLog = useCallback(() => setShowLog((v) => !v), [])
   const exitCheck = useCallback(() => setScreen('topic'), [])
 
   // ---- check lifecycle ----
@@ -596,8 +593,6 @@ export default function App() {
             detail={topicDetail}
             heroPracticed={heroPracticed}
             histStats={histStats}
-            showLog={showLog}
-            onToggleLog={toggleLog}
             onStartCheck={startCheck}
             onBack={backToWorklist}
           />
