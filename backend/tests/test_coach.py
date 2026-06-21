@@ -35,11 +35,10 @@ def test_codex_coach_uses_noninteractive_exec_with_read_only_sandbox():
     coach = CodexCoach(binary="codex")
     command = coach.build_command()
 
-    assert command[:2] == ["codex", "exec"]
+    assert command[:4] == ["codex", "-a", "never", "exec"]
     assert command[-1] == "-"
     assert "--sandbox" in command
     assert command[command.index("--sandbox") + 1] == "read-only"
-    assert "--ask-for-approval" not in command
     assert "--skip-git-repo-check" in command
     assert "--ephemeral" in command
 

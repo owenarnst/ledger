@@ -12,7 +12,6 @@ CREATE TABLE IF NOT EXISTS projects (
     slug TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     repo_path TEXT NOT NULL,
-    is_demo INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -45,7 +44,6 @@ CREATE TABLE IF NOT EXISTS topics (
     risk_class TEXT NOT NULL,
     caller_count INTEGER NOT NULL,
     claude_authored INTEGER NOT NULL DEFAULT 0,
-    checkable INTEGER NOT NULL DEFAULT 0,
     rank INTEGER NOT NULL,
     impact_level TEXT,
     impact_consequence TEXT,
@@ -128,23 +126,22 @@ CREATE TABLE IF NOT EXISTS checks (
     sandbox_path TEXT NOT NULL,
     target_file TEXT NOT NULL,
     test_command TEXT NOT NULL,
+    difficulty TEXT NOT NULL DEFAULT 'hard',
+    template_id TEXT NOT NULL DEFAULT 'tenant-cache-hard',
+    plan_json TEXT NOT NULL DEFAULT '{"difficulty":"hard","template_id":"tenant-cache-hard","steps":[{"type":"sandbox"}],"questions":[]}',
     started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at TEXT
 );
 
-CREATE TABLE IF NOT EXISTS check_recipes (
+CREATE TABLE IF NOT EXISTS exercise_plans (
     id TEXT PRIMARY KEY,
     topic_id TEXT NOT NULL REFERENCES topics(id),
-    topic_revision_id TEXT REFERENCES topic_revisions(id),
-    fixture_source TEXT NOT NULL,
-    revision_sha TEXT,
-    target_file TEXT NOT NULL,
-    target_test TEXT,
-    test_command TEXT NOT NULL,
-    mutation_before TEXT NOT NULL,
-    mutation_after TEXT NOT NULL,
+    topic_revision_id TEXT NOT NULL REFERENCES topic_revisions(id),
+    difficulty TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    plan_json TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(topic_id)
+    UNIQUE(topic_revision_id, difficulty)
 );
 
 CREATE TABLE IF NOT EXISTS attempts (
@@ -153,6 +150,16 @@ CREATE TABLE IF NOT EXISTS attempts (
     passed INTEGER NOT NULL,
     output TEXT NOT NULL,
     elapsed_ms INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS check_answers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_id TEXT NOT NULL REFERENCES checks(id),
+    question_id TEXT NOT NULL,
+    selected_index INTEGER,
+    correct INTEGER NOT NULL,
+    rationale TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -192,12 +199,21 @@ MIGRATIONS = [
     "ALTER TABLE evidence ADD COLUMN tool_sequence_json TEXT NOT NULL DEFAULT '[]'",
     "ALTER TABLE evidence ADD COLUMN link_confidence TEXT NOT NULL DEFAULT 'heuristic'",
     "ALTER TABLE reflections ADD COLUMN topic_revision_id TEXT REFERENCES topic_revisions(id)",
-    "ALTER TABLE projects ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0",
-    "ALTER TABLE topics ADD COLUMN checkable INTEGER NOT NULL DEFAULT 0",
-    # Repo-derived recipes pin a real commit and the test the mutant must break;
-    # fixture-based demo recipes leave both NULL.
-    "ALTER TABLE check_recipes ADD COLUMN revision_sha TEXT",
-    "ALTER TABLE check_recipes ADD COLUMN target_test TEXT",
+    "ALTER TABLE checks ADD COLUMN difficulty TEXT NOT NULL DEFAULT 'hard'",
+    "ALTER TABLE checks ADD COLUMN template_id TEXT NOT NULL DEFAULT 'tenant-cache-hard'",
+    "ALTER TABLE checks ADD COLUMN plan_json TEXT NOT NULL DEFAULT '{\"difficulty\":\"hard\",\"template_id\":\"tenant-cache-hard\",\"steps\":[{\"type\":\"sandbox\"}],\"questions\":[]}'",
+    """
+    CREATE TABLE IF NOT EXISTS exercise_plans (
+        id TEXT PRIMARY KEY,
+        topic_id TEXT NOT NULL REFERENCES topics(id),
+        topic_revision_id TEXT NOT NULL REFERENCES topic_revisions(id),
+        difficulty TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        plan_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(topic_revision_id, difficulty)
+    )
+    """,
     # ADR-0002: verified excerpts carry their hash + the analyst's relevance note;
     # topics carry the analyst's grounded impact + priority explanation.
     "ALTER TABLE evidence ADD COLUMN excerpt_sha TEXT",
@@ -205,6 +221,21 @@ MIGRATIONS = [
     "ALTER TABLE topics ADD COLUMN impact_level TEXT",
     "ALTER TABLE topics ADD COLUMN impact_consequence TEXT",
     "ALTER TABLE topics ADD COLUMN priority_rationale TEXT",
+    """
+    CREATE TABLE IF NOT EXISTS analysis_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        analyst_model TEXT NOT NULL,
+        schema_version TEXT NOT NULL,
+        input_scope_json TEXT NOT NULL DEFAULT '{}',
+        raw_output TEXT NOT NULL DEFAULT '',
+        proposed_count INTEGER NOT NULL DEFAULT 0,
+        verified_count INTEGER NOT NULL DEFAULT 0,
+        rejected_json TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
 ]
 
 

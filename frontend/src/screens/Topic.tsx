@@ -3,7 +3,7 @@
 // / L2 tool-chips + summary / L3 imported session record). Post-check: Practice
 // history. Everything is provider-labeled from the backend evidence — the hero
 // is Claude-authored here (ADR-0001 spine), not the design's placeholder Codex.
-import { Fragment } from 'react'
+import { Fragment, useState } from 'react'
 import { badge, chipPlain, chipRisk, toolChip, chipForKind } from '../theme'
 import { deriveReceipt, riskLabel } from '../adapt'
 import * as api from '../api'
@@ -16,18 +16,17 @@ interface TopicProps {
   histStats: { elapsed: string; runs: number; concept: number } | null
   showLog: boolean
   onToggleLog: () => void
-  onStartCheck: () => void
+  onStartCheck: (difficulty: api.Difficulty) => void
   onBack: () => void
 }
 
 export default function Topic({ detail, heroPracticed, histStats, showLog, onToggleLog, onStartCheck, onBack }: TopicProps) {
+  const [selectedDifficulty, setSelectedDifficulty] = useState<api.Difficulty>('medium')
   const r = deriveReceipt(detail)
-  // A check is offered only when the backend has a curated recipe for this
-  // Topic (and a revision to sandbox). Otherwise the backend refuses it.
-  const canCheck = !!detail.current_revision && !!detail.checkable
+  const canCheck = !!detail.current_revision
   const heroBadgeCss = heroPracticed ? badge('practiced') : badge('recommended')
   const heroBadgeLabel = heroPracticed ? 'Practiced' : 'Check recommended'
-  const heroCtaLabel = heroPracticed ? 'Practice again' : 'Start check'
+  const heroStatusLabel = heroPracticed ? 'Ownership check completed' : 'Ownership check recommended'
   const callers = `${detail.caller_count} ${detail.caller_count === 1 ? 'caller' : 'callers'}`
 
   const hs = histStats || { elapsed: '—', runs: 0, concept: 0 }
@@ -62,28 +61,67 @@ export default function Topic({ detail, heroPracticed, histStats, showLog, onTog
                 <path d="M8 1.8 2.5 4.2v3.4c0 3.4 2.3 5.7 5.5 6.6 3.2-.9 5.5-3.2 5.5-6.6V4.2L8 1.8Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
                 <path d="M5.8 8.1 7.3 9.6l3-3.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              Ownership check recommended
+              {heroStatusLabel}
             </div>
           </div>
-          <button
-            onClick={canCheck ? onStartCheck : undefined}
-            disabled={!canCheck}
-            style={{
-              flex: 'none',
-              background: canCheck ? 'var(--accent)' : 'var(--panel2)',
-              color: canCheck ? '#1c140f' : 'var(--faint)',
-              border: canCheck ? 'none' : '1px solid var(--bd2)',
-              borderRadius: 9,
-              padding: '11px 20px',
-              fontFamily: "'Geist', sans-serif",
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: canCheck ? 'pointer' : 'not-allowed',
-              boxShadow: canCheck ? '0 1px 0 rgba(0,0,0,0.2)' : 'none',
-            }}
-          >
-            {canCheck ? heroCtaLabel : 'No check available'}
-          </button>
+          <div style={{ flex: 'none', minWidth: 310, display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 9 }}>
+            {canCheck ? (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 4, padding: 4, border: '1px solid var(--bd2)', borderRadius: 11, background: 'var(--panel)' }}>
+                  {[
+                    { difficulty: 'easy' as api.Difficulty, label: 'Easy', sub: 'quiz' },
+                    { difficulty: 'medium' as api.Difficulty, label: 'Medium', sub: 'guided' },
+                    { difficulty: 'hard' as api.Difficulty, label: 'Hard', sub: 'sandbox' },
+                  ].map((item) => {
+                    const active = selectedDifficulty === item.difficulty
+                    return (
+                      <button
+                        key={item.difficulty}
+                        onClick={() => setSelectedDifficulty(item.difficulty)}
+                        style={{
+                          border: 'none',
+                          borderRadius: 8,
+                          padding: '8px 8px 7px',
+                          background: active ? 'var(--accent)' : 'transparent',
+                          color: active ? '#1c140f' : 'var(--mut)',
+                          cursor: 'pointer',
+                          textAlign: 'center',
+                          boxShadow: active ? '0 1px 0 rgba(0,0,0,0.2)' : 'none',
+                        }}
+                      >
+                        <div style={{ fontSize: 12.5, fontWeight: 700 }}>{item.label}</div>
+                        <div style={{ marginTop: 1, fontFamily: mono, fontSize: 9.5, opacity: 0.78 }}>{item.sub}</div>
+                      </button>
+                    )
+                  })}
+                </div>
+                <button
+                  onClick={() => onStartCheck(selectedDifficulty)}
+                  style={{
+                    background: 'linear-gradient(180deg, var(--accent), #b9673f)',
+                    color: '#1c140f',
+                    border: 'none',
+                    borderRadius: 9,
+                    padding: '11px 16px',
+                    fontFamily: "'Geist', sans-serif",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    boxShadow: '0 1px 0 rgba(0,0,0,0.2)',
+                  }}
+                >
+                  Start {selectedDifficulty} check →
+                </button>
+              </>
+            ) : (
+              <button
+                disabled
+                style={{ background: 'var(--panel2)', color: 'var(--faint)', border: '1px solid var(--bd2)', borderRadius: 9, padding: '11px 20px', fontFamily: "'Geist', sans-serif", fontSize: 14, fontWeight: 600, cursor: 'not-allowed' }}
+              >
+                No sandbox available
+              </button>
+            )}
+          </div>
         </div>
 
         <div style={{ fontSize: 13.5, color: 'var(--mut)', marginBottom: 26, maxWidth: 680 }}>
@@ -141,30 +179,15 @@ export default function Topic({ detail, heroPracticed, histStats, showLog, onTog
             <div style={{ border: '1px solid var(--bd)', borderRadius: 12, background: 'var(--panel)', overflow: 'hidden' }}>
               <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>Authoring receipt</div>
-                {r.hasReceipt ? (
-                  <>
-                    <span style={chipForKind(r.providerChipKind as any)}>{r.providerLabel}</span>
-                    <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, fontFamily: mono, fontSize: 10, color: 'var(--faint)' }}>
-                      <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
-                        <path d="M4 7V5a4 4 0 0 1 8 0v2" stroke="currentColor" strokeWidth="1.3" />
-                        <rect x="3" y="7" width="10" height="6.5" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
-                      </svg>
-                      imported from logs
-                    </span>
-                  </>
-                ) : (
-                  <span style={{ marginLeft: 'auto', fontFamily: mono, fontSize: 10, color: 'var(--faint)' }}>
-                    extracted from code
-                  </span>
-                )}
+                <span style={chipForKind(r.providerChipKind as any)}>{r.providerLabel}</span>
+                <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, fontFamily: mono, fontSize: 10, color: 'var(--faint)' }}>
+                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+                    <path d="M4 7V5a4 4 0 0 1 8 0v2" stroke="currentColor" strokeWidth="1.3" />
+                    <rect x="3" y="7" width="10" height="6.5" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+                  </svg>
+                  imported from logs
+                </span>
               </div>
-
-              {!r.hasReceipt && (
-                <div style={{ padding: '14px 16px', fontSize: 12.5, color: 'var(--mut)', lineHeight: 1.55 }}>
-                  No authoring receipt. Ledger surfaced this decision from the code itself, not from a
-                  linked coding session — what it searched for the reasoning is shown under Code reality.
-                </div>
-              )}
 
               {r.toolSequence.length > 0 && (
                 <div style={{ padding: '13px 16px', borderBottom: '1px solid var(--bd)' }}>
@@ -188,22 +211,20 @@ export default function Topic({ detail, heroPracticed, histStats, showLog, onTog
                 </div>
               )}
 
-              {r.hasReceipt && (
-                <div style={{ padding: '11px 16px', borderTop: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ fontFamily: mono, fontSize: 10.5, color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {[r.sourcePath, r.linkConfidence].filter(Boolean).join(' · ') || 'no source recorded'}
+              <div style={{ padding: '11px 16px', borderTop: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontFamily: mono, fontSize: 10.5, color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {[r.sourcePath, r.linkConfidence].filter(Boolean).join(' · ') || 'no source recorded'}
+                </span>
+                {(r.toolSequence.length > 0 || r.sessionId) && (
+                  <span
+                    className="lg-hover-underline"
+                    onClick={onToggleLog}
+                    style={{ marginLeft: 'auto', flex: 'none', fontSize: 11.5, color: 'var(--accent)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    {showLog ? 'Hide session record' : 'View session record →'}
                   </span>
-                  {(r.toolSequence.length > 0 || r.sessionId) && (
-                    <span
-                      className="lg-hover-underline"
-                      onClick={onToggleLog}
-                      style={{ marginLeft: 'auto', flex: 'none', fontSize: 11.5, color: 'var(--accent)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                    >
-                      {showLog ? 'Hide session record' : 'View session record →'}
-                    </span>
-                  )}
-                </div>
-              )}
+                )}
+              </div>
 
               {showLog && (
                 <div className="lg-scroll" style={{ borderTop: '1px solid var(--bd)', background: '#121110', maxHeight: 200, overflow: 'auto' }}>

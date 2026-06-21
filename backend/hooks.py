@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,24 @@ from .repository import DEFAULT_DB_PATH, DEFAULT_SANDBOX_ROOT, LedgerRepository
 
 
 DEFAULT_SPOOL_DIR = Path.home() / ".ledger" / "spool"
+DEFAULT_BASE_URL = "http://127.0.0.1:4317"
+
+
+def _git(cwd: str | Path, *args: str) -> str | None:
+    """Run a read-only git command; return stripped stdout or None on any failure."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(cwd), *args],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
 
 
 class HookSpool:
@@ -42,17 +61,119 @@ def build_session_start_nudge(
     repo: LedgerRepository,
     *,
     cwd: str | Path,
-    base_url: str = "http://127.0.0.1:4317",
+    base_url: str = DEFAULT_BASE_URL,
 ) -> str:
+    line, _ = _nudge_details(repo, cwd=cwd, base_url=base_url)
+    return line
+
+
+def _nudge_details(
+    repo: LedgerRepository,
+    *,
+    cwd: str | Path,
+    base_url: str = DEFAULT_BASE_URL,
+) -> tuple[str, int]:
     project = repo.initialize_project_from_repo(cwd)
     topics = repo.list_topics(project["slug"])
     ready_states = {"check_recommended", "code_changed_since_practice"}
-    # A check is only "ready" when the Topic both wants one and has a curated
-    # recipe to run; file activity alone never counts.
-    ready = sum(
-        1 for topic in topics if topic["state"] in ready_states and topic.get("checkable")
+    ready = sum(1 for topic in topics if topic["state"] in ready_states)
+    line = (
+        f"Ledger: {ready} checks ready for {project['slug']}. "
+        "If Claude just helped with a complex change, this is a good moment to test your understanding. "
+        f"Open {base_url}/p/{project['slug']}"
     )
-    return f"Ledger: {ready} checks ready for {project['slug']} · Open {base_url}/p/{project['slug']}"
+    return line, ready
+
+
+def spool_commit(cwd: str | Path, *, spool_dir: str | Path = DEFAULT_SPOOL_DIR) -> Path:
+    """Called by the git post-commit hook. Gathers commit metadata and queues a
+    spool event. Best-effort and fast; never raises into the caller's git flow."""
+    root = _git(cwd, "rev-parse", "--show-toplevel") or str(Path(cwd).expanduser().resolve())
+    changed = _git(root, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "HEAD") or ""
+    event = {
+        "provider": "git",
+        "event_type": "post-commit",
+        "cwd": root,
+        "branch": _git(root, "rev-parse", "--abbrev-ref", "HEAD"),
+        "head_sha": _git(root, "rev-parse", "HEAD"),
+        "changed_files": [line for line in changed.splitlines() if line],
+    }
+    return HookSpool(spool_dir).write(event)
+
+
+def session_start(
+    repo: LedgerRepository,
+    *,
+    cwd: str | Path,
+    base_url: str = DEFAULT_BASE_URL,
+    spool_dir: str | Path = DEFAULT_SPOOL_DIR,
+) -> dict[str, Any]:
+    """Called by the Claude SessionStart hook. Imports queued commits, reconciles
+    HEAD, and returns the nudge + the hookSpecificOutput envelope Claude Code expects."""
+    drained = drain_spool(repo, spool_dir=spool_dir)
+    reconciled = repo.reconcile_head(cwd, _git(cwd, "rev-parse", "HEAD"))
+    line, ready = _nudge_details(repo, cwd=cwd, base_url=base_url)
+    envelope = {
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": (
+                f"[Ledger] {line}. This is a session-start notification — "
+                f"surface it to the user verbatim at the start of your first reply."
+            ),
+            "sessionTitle": f"Ledger: {ready} checks ready",
+        }
+    }
+    return {"line": line, "ready": ready, "drained": drained["imported"], "reconciled": reconciled, "envelope": envelope}
+
+
+def install_hooks(
+    repo_path: str | Path,
+    *,
+    interpreter: str,
+    base_url: str = DEFAULT_BASE_URL,
+) -> dict[str, Any]:
+    """Write the git post-commit hook and merge the Claude SessionStart hook into
+    the target repo's .claude/settings.json. Idempotent; ensures ~/.ledger exists."""
+    root = Path(repo_path).expanduser().resolve()
+    if not (root / ".git").is_dir():
+        raise ValueError(f"not a git repository (no .git dir): {root}")
+    Path(DEFAULT_SPOOL_DIR).mkdir(parents=True, exist_ok=True)
+
+    hooks_dir = root / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    post_commit = hooks_dir / "post-commit"
+    post_commit.write_text(
+        "#!/bin/sh\n"
+        "# Installed by Ledger — queues a spool event after every commit; never blocks git.\n"
+        f'"{interpreter}" -m backend spool-commit --cwd "$(git rev-parse --show-toplevel)" >/dev/null 2>&1 &\n'
+        "exit 0\n"
+    )
+    post_commit.chmod(0o755)
+
+    claude_dir = root / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    settings_path = claude_dir / "settings.json"
+    settings: dict[str, Any] = {}
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+        except json.JSONDecodeError:
+            settings = {}
+    hooks = settings.setdefault("hooks", {})
+    command = f'"{interpreter}" -m backend session-start --cwd "$CLAUDE_PROJECT_DIR"'
+    entry = {"matcher": "startup", "hooks": [{"type": "command", "command": command}]}
+    # Idempotent: drop any prior Ledger SessionStart entry before re-adding.
+    kept = [e for e in hooks.get("SessionStart", []) if "backend session-start" not in json.dumps(e)]
+    hooks["SessionStart"] = kept + [entry]
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+
+    return {
+        "repo": str(root),
+        "post_commit": str(post_commit),
+        "settings": str(settings_path),
+        "interpreter": interpreter,
+        "local_override": (claude_dir / "settings.local.json").exists(),
+    }
 
 
 def drain_spool(

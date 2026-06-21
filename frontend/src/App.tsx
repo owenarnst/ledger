@@ -12,6 +12,8 @@ import { toCards, isActionable, testPathFor, Card } from './adapt'
 
 const mono = "'JetBrains Mono', monospace"
 
+const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
+
 interface RailProps {
   projectName: string
   topicCount: number
@@ -187,6 +189,7 @@ export default function App() {
   const [roContent, setRoContent] = useState<Record<string, string>>({})
 
   const [running, setRunning] = useState(false)
+  const [pseudocodeRunning, setPseudocodeRunning] = useState(false)
   const [phase, setPhase] = useState<Phase>('idle')
   const [runOutput, setRunOutput] = useState('')
   const [runs, setRuns] = useState(0)
@@ -194,6 +197,9 @@ export default function App() {
 
   const [thread, setThread] = useState<ThreadMessage[]>([])
   const [coachInput, setCoachInput] = useState('')
+  const [coachProvider, setCoachProvider] = useState<'claude-code' | 'codex-exec'>('claude-code')
+  const [answers, setAnswers] = useState<Record<string, number>>({})
+  const [answerResults, setAnswerResults] = useState<api.AnswerResult[]>([])
   const [histStats, setHistStats] = useState<HistStats | null>(null)
   const [showLog, setShowLog] = useState(false)
 
@@ -259,7 +265,7 @@ export default function App() {
   const exitCheck = useCallback(() => setScreen('topic'), [])
 
   // ---- check lifecycle ----
-  const startCheck = useCallback(async () => {
+  const startCheck = useCallback(async (difficulty: api.Difficulty = 'hard') => {
     if (!topicDetail) return
     setScreen('workspace')
     setPhase('creating')
@@ -272,9 +278,11 @@ export default function App() {
     setFiles([])
     setCode('')
     setRoContent({})
+    setAnswers({})
+    setAnswerResults([])
     startTsRef.current = Date.now()
     try {
-      const created = await api.createCheck(topicDetail.id)
+      const created = await api.createCheck(topicDetail.id, difficulty)
       setCheck(created)
       const targetPath = created.target_file
       const targetFile = await api.readFile(created.id, targetPath)
@@ -308,6 +316,100 @@ export default function App() {
     setPhase((p) => (p === 'pass' || p === 'fail' ? 'idle' : p))
   }, [])
 
+  const typeInsertedCommentLines = useCallback(async (target: string) => {
+    const original = codeRef.current
+    const originalLines = original.split('\n')
+    const targetLines = target.split('\n')
+    const displayLines = originalLines.slice()
+    let originalIndex = 0
+    let inserted = 0
+
+    for (const targetLine of targetLines) {
+      if (originalIndex < originalLines.length && targetLine === originalLines[originalIndex]) {
+        originalIndex += 1
+        continue
+      }
+
+      if (originalIndex < originalLines.length && targetLine.startsWith(originalLines[originalIndex])) {
+        const replaceAt = originalIndex + inserted
+        const base = originalLines[originalIndex]
+        for (let i = base.length; i <= targetLine.length; i += 4) {
+          displayLines[replaceAt] = targetLine.slice(0, i)
+          const next = displayLines.join('\n')
+          codeRef.current = next
+          setCode(next)
+          await sleep(6)
+        }
+        displayLines[replaceAt] = targetLine
+        originalIndex += 1
+        continue
+      }
+
+      const insertAt = originalIndex + inserted
+      displayLines.splice(insertAt, 0, '')
+      for (let i = 0; i <= targetLine.length; i += 4) {
+        displayLines[insertAt] = targetLine.slice(0, i)
+        const next = displayLines.join('\n')
+        codeRef.current = next
+        setCode(next)
+        await sleep(6)
+      }
+      displayLines[insertAt] = targetLine
+      inserted += 1
+    }
+
+    codeRef.current = target
+    setCode(target)
+  }, [])
+
+  const addPseudocodeComments = useCallback(async () => {
+    if (!check || !activeFile || running || pseudocodeRunning) return
+    const active = files.find((f) => f.path === activeFile)
+    if (!active?.editable) return
+    setPseudocodeRunning(true)
+    try {
+      const result = await api.generatePseudocodeComments(check.id, activeFile)
+      if (result.changed) {
+        await typeInsertedCommentLines(result.content)
+        setFiles((items) => items.map((item) => (item.path === activeFile ? { ...item, modified: true } : item)))
+        setPhase((p) => (p === 'pass' || p === 'fail' ? 'idle' : p))
+      }
+    } catch (e) {
+      setRunOutput(`Could not add hints: ${e instanceof Error ? e.message : String(e)}`)
+      setPhase('error')
+    } finally {
+      setPseudocodeRunning(false)
+    }
+  }, [activeFile, check, files, pseudocodeRunning, running, typeInsertedCommentLines])
+
+  const askCoachAboutPrints = useCallback(async () => {
+    if (!check || running || pseudocodeRunning) return
+    setPseudocodeRunning(true)
+    try {
+      await api.writeFile(check.id, check.target_file, codeRef.current)
+      const run = await api.runCheck(check.id)
+      const mins = Math.max(1, Math.round((Date.now() - startTsRef.current) / 60000))
+      setRunOutput(run.output || '')
+      setPhase(run.passed ? 'pass' : 'fail')
+      setRuns((n) => n + 1)
+      setElapsedMin(mins)
+      const question = 'Use the latest test output, especially any printed values, to explain what the print output reveals about the bug. Be concise and do not provide code or a patch.'
+      setThread((th) => [...th, { role: 'user', text: 'What does the print output show?' }, { role: 'thinking' }])
+      const res = await api.askCoach(check.id, question, coachProvider)
+      setThread((th) => {
+        const copy = th.slice()
+        const i = copy.findIndex((m) => m.role === 'thinking')
+        if (i >= 0) copy[i] = { role: 'coach', text: res.response || '' }
+        return copy
+      })
+    } catch (e) {
+      setRunOutput(`Could not ask coach about prints: ${e instanceof Error ? e.message : String(e)}`)
+      setPhase('error')
+    } finally {
+      setPseudocodeRunning(false)
+    }
+  }, [check, coachProvider, pseudocodeRunning, running])
+
   const runChecks = useCallback(async () => {
     if (running || !check) return
     setRunning(true)
@@ -328,6 +430,43 @@ export default function App() {
     }
   }, [running, check])
 
+  const submitAnswers = useCallback(async (questionId?: string) => {
+    if (!check || !questionId || answers[questionId] === undefined) return
+    try {
+      const result = await api.submitAnswers(check.id, { [questionId]: answers[questionId] })
+      const questionResult = result.results.find((item) => item.question_id === questionId)
+      if (!questionResult) throw new Error('backend did not grade the selected question')
+      setAnswerResults((current) => {
+        const next = [...current.filter((item) => item.question_id !== questionId), questionResult]
+        const questionIds = (check.plan?.steps || [])
+          .filter((step) => step.type === 'multiple_choice' && step.question_id)
+          .map((step) => step.question_id as string)
+        const allCurrentAnswersCorrect =
+          questionIds.length > 0 &&
+          questionIds.every((id) => {
+            const graded = next.find((item) => item.question_id === id)
+            return !!graded && graded.correct && graded.selected_index === answers[id]
+          })
+        if (allCurrentAnswersCorrect && check.difficulty === 'easy') setPhase('pass')
+        return next
+      })
+    } catch (e) {
+      setRunOutput(`Could not submit answers: ${e instanceof Error ? e.message : String(e)}`)
+      setPhase('error')
+    }
+  }, [check, answers])
+
+  const answerQuestion = useCallback(
+    (questionId: string, choiceIndex: number) => {
+      if (answers[questionId] === choiceIndex) return
+      setAnswers((current) => ({ ...current, [questionId]: choiceIndex }))
+      if (check?.difficulty === 'easy') {
+        setPhase((current) => (current === 'pass' ? 'idle' : current))
+      }
+    },
+    [answers, check?.difficulty],
+  )
+
   // ---- coach ----
   const pushCoach = useCallback(
     async (text: string) => {
@@ -336,7 +475,7 @@ export default function App() {
       setThread((th) => [...th, { role: 'user', text: t }, { role: 'thinking' }])
       setCoachInput('')
       try {
-        const res = await api.askCoach(check.id, t)
+        const res = await api.askCoach(check.id, t, coachProvider)
         setThread((th) => {
           const copy = th.slice()
           const i = copy.findIndex((m) => m.role === 'thinking')
@@ -352,7 +491,7 @@ export default function App() {
         })
       }
     },
-    [check],
+    [check, coachProvider],
   )
 
   const sendCoach = useCallback(() => pushCoach(coachInput), [pushCoach, coachInput])
@@ -480,14 +619,24 @@ export default function App() {
             onCode={onCode}
             phase={phase}
             running={running}
+            pseudocodeRunning={pseudocodeRunning}
+            canAskCoachAboutPrints={code.includes('Plan:')}
             runOutput={runOutput}
             runChecks={runChecks}
+            addPseudocodeComments={addPseudocodeComments}
+            askCoachAboutPrints={askCoachAboutPrints}
             thread={thread}
             coachInput={coachInput}
+            coachProvider={coachProvider}
+            onCoachProvider={setCoachProvider}
             onCoachInput={onCoachInput}
             onCoachKey={onCoachKey}
             sendCoach={sendCoach}
             askChip={pushCoach}
+            answers={answers}
+            answerResults={answerResults}
+            onAnswer={answerQuestion}
+            submitAnswers={submitAnswers}
             canComplete={phase === 'pass'}
             completeCheck={completeCheck}
           />

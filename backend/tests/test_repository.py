@@ -1,56 +1,24 @@
-import json
-
-import pytest
-
-from backend.repository import (
-    HERO_REPO_CHECK,
-    LedgerRepository,
-    RecipeValidationError,
-    RepoCheckSpec,
-    TopicNotCheckableError,
-)
+from backend.db import connect, initialize_schema
+from backend.repository import LedgerRepository
 from backend.ingestion import ClaudeCodeAdapter, CodexAdapter
 
 
-def test_initialize_does_not_seed_demo(tmp_path):
+def test_repository_seeds_demo_project_and_topics(tmp_path):
     repo = LedgerRepository(tmp_path / "ledger.db")
     repo.initialize()
-
-    assert repo.list_projects() == []
-
-
-def test_seed_demo_installs_curated_project_and_topics(tmp_path):
-    repo = LedgerRepository(tmp_path / "ledger.db")
-    repo.initialize()
-    repo.seed_demo()
 
     projects = repo.list_projects()
-    assert [project["slug"] for project in projects] == ["docs-api"]
-    assert projects[0]["is_demo"] == 1
+    assert [project["slug"] for project in projects] == ["docs-search-api"]
 
-    topics = repo.list_topics("docs-api")
+    topics = repo.list_topics("docs-search-api")
     assert len(topics) == 4
     assert topics[0]["state"] == "check_recommended"
     assert "tenant" in topics[0]["title"].lower()
-    # Only the fully grounded hero topic carries a curated recipe.
-    assert topics[0]["checkable"] == 1
-    assert all(topic["checkable"] == 0 for topic in topics[1:])
-
-
-def test_seed_demo_is_idempotent(tmp_path):
-    repo = LedgerRepository(tmp_path / "ledger.db")
-    repo.initialize()
-    repo.seed_demo()
-    repo.seed_demo()
-
-    assert [project["slug"] for project in repo.list_projects()] == ["docs-api"]
-    assert len(repo.list_topics("docs-api")) == 4
 
 
 def test_seeded_topic_has_revision(tmp_path):
     repo = LedgerRepository(tmp_path / "ledger.db")
     repo.initialize()
-    repo.seed_demo()
 
     topic = repo.get_topic("tenant-cache-isolation")
 
@@ -64,7 +32,6 @@ def test_seeded_topic_has_revision(tmp_path):
 def test_seeded_topic_has_session_grounded_claude_receipt(tmp_path):
     repo = LedgerRepository(tmp_path / "ledger.db")
     repo.initialize()
-    repo.seed_demo()
 
     topic = repo.get_topic("tenant-cache-isolation")
     receipt = next(item for item in topic["evidence"] if item["kind"] == "claude_receipt")
@@ -80,17 +47,86 @@ def test_seeded_topic_has_session_grounded_claude_receipt(tmp_path):
     assert receipt["link_confidence"] == "hand_verified"
 
 
+def test_initialize_backfills_missing_seeded_revision(tmp_path):
+    db_path = tmp_path / "ledger.db"
+    with connect(db_path) as conn:
+        initialize_schema(conn)
+        conn.execute(
+            "INSERT INTO projects (id, slug, name, repo_path) VALUES (?, ?, ?, ?)",
+            ("project-docs-search-api", "docs-search-api", "Docs Search API", "/demo/docs-search-api"),
+        )
+        conn.execute(
+            """
+            INSERT INTO topics
+            (id, project_id, provider, title, state, summary, why_now, risk_class, caller_count, claude_authored, rank)
+            VALUES (?, 'project-docs-search-api', 'claude_code', ?, 'check_recommended', ?, ?, 'persistence', 5, 1, 1)
+            """,
+            (
+                "tenant-cache-isolation",
+                "Tenant isolation in retrieval cache",
+                "Cached retrieval results must never cross tenant boundaries.",
+                "Claude touched the retrieval path.",
+            ),
+        )
+        conn.commit()
+
+    repo = LedgerRepository(db_path)
+    repo.initialize()
+
+    topic = repo.get_topic("tenant-cache-isolation")
+    assert topic["current_revision"]["id"] == "tenant-cache-isolation-rev-1"
+
+
+def test_initialize_backfills_seeded_receipt_grounding(tmp_path):
+    db_path = tmp_path / "ledger.db"
+    with connect(db_path) as conn:
+        initialize_schema(conn)
+        conn.execute(
+            "INSERT INTO projects (id, slug, name, repo_path) VALUES (?, ?, ?, ?)",
+            ("project-docs-search-api", "docs-search-api", "Docs Search API", "/demo/docs-search-api"),
+        )
+        conn.execute(
+            """
+            INSERT INTO topics
+            (id, project_id, provider, title, state, summary, why_now, risk_class, caller_count, claude_authored, rank)
+            VALUES (?, 'project-docs-search-api', 'claude_code', ?, 'check_recommended', ?, ?, 'persistence', 5, 1, 1)
+            """,
+            (
+                "tenant-cache-isolation",
+                "Tenant isolation in retrieval cache",
+                "Cached retrieval results must never cross tenant boundaries.",
+                "Claude touched the retrieval path.",
+            ),
+        )
+        conn.execute(
+            "INSERT INTO evidence (topic_id, provider, kind, title, body) VALUES (?, ?, ?, ?, ?)",
+            (
+                "tenant-cache-isolation",
+                "claude_code",
+                "claude_receipt",
+                "Claude Code session",
+                "Read retrieval/rerank.py -> Edit retrieval/rerank.py -> Bash python -m pytest.",
+            ),
+        )
+        conn.commit()
+
+    repo = LedgerRepository(db_path)
+    repo.initialize()
+
+    topic = repo.get_topic("tenant-cache-isolation")
+    receipt = next(item for item in topic["evidence"] if item["kind"] == "claude_receipt")
+    assert receipt["session_id"] == "claude-demo-session"
+    assert receipt["link_confidence"] == "hand_verified"
+
+
 def test_check_lifecycle_persists_attempt_and_completion(tmp_path):
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
     repo.initialize()
-    repo.seed_demo()
 
     check = repo.create_check("tenant-cache-isolation")
     assert check["state"] == "in_progress"
     assert check["sandbox_path"]
     assert check["topic_revision_id"] == "tenant-cache-isolation-rev-1"
-    # The check runs the recipe's own command, not a hardcoded runner.
-    assert check["test_command"] == "python -m pytest tests"
 
     result = repo.run_check(check["id"])
     assert result["passed"] is False
@@ -99,10 +135,7 @@ def test_check_lifecycle_persists_attempt_and_completion(tmp_path):
     file_state = repo.read_check_file(check["id"], "retrieval/rerank.py")
     assert "return list(documents)" in file_state["content"]
 
-    fixed = file_state["content"].replace(
-        "return list(documents)",
-        "return [doc for doc in documents if doc.tenant_id == tenant_id]",
-    )
+    fixed = file_state["content"].replace("return list(documents)", "return [doc for doc in documents if doc.tenant_id == tenant_id]")
     repo.update_check_file(check["id"], "retrieval/rerank.py", fixed)
 
     result = repo.run_check(check["id"])
@@ -117,34 +150,8 @@ def test_check_lifecycle_persists_attempt_and_completion(tmp_path):
     assert events[-1]["topic_revision_id"] == "tenant-cache-isolation-rev-1"
 
 
-def test_create_check_refused_when_topic_has_no_recipe(tmp_path):
-    repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
-    repo.initialize()
-    repo.seed_demo()
-
-    with pytest.raises(TopicNotCheckableError):
-        repo.create_check("rerank-threshold")
-
-
-def test_project_identity_resists_slug_collision_hijack(tmp_path):
-    repo = LedgerRepository(tmp_path / "ledger.db")
-    repo.initialize()
-    repo.seed_demo()  # demo owns slug "docs-api" and repo_path "/demo/docs-api"
-
-    real_repo = tmp_path / "docs-api"
-    real_repo.mkdir()
-    project = repo.initialize_project_from_repo(str(real_repo))
-
-    # A real repo whose basename collides with the demo gets a distinct slug,
-    # and the demo project is never re-homed onto the real path.
-    assert project["slug"] != "docs-api"
-    assert project["is_demo"] == 0
-    assert project["repo_path"] == str(real_repo)
-    demo = next(p for p in repo.list_projects() if p["id"] == "project-docs-api")
-    assert demo["repo_path"] == "/demo/docs-api"
-
-
 def test_hook_event_registers_project_without_minting_topics(tmp_path):
+    # Ingestion records provenance only; it never mints a Topic (ADR-0002).
     repo_path = tmp_path / "docs-api"
     retrieval_dir = repo_path / "retrieval"
     retrieval_dir.mkdir(parents=True)
@@ -161,34 +168,23 @@ def test_hook_event_registers_project_without_minting_topics(tmp_path):
         cwd=str(repo_path),
         branch="main",
         head_sha="abc123",
-        payload={
-            "changed_files": [
-                "retrieval/rerank.py",
-                "/etc/passwd",  # absolute, outside the repo
-                "../sibling/leak.py",  # escapes the repo
-                ".git/config",  # non-source dir
-            ]
-        },
+        payload={"changed_files": ["retrieval/rerank.py"]},
     )
 
     project = result["project"]
     assert project["slug"] == "docs-api"
     assert project["repo_path"] == str(repo_path)
-    assert project["is_demo"] == 0
 
     # File activity never becomes a Topic.
     assert result["topics"] == []
     assert repo.list_topics("docs-api") == []
 
-    # Only in-repo paths survive containment filtering.
-    payload = json.loads(result["event"]["payload_json"])
-    assert payload["changed_files"] == ["retrieval/rerank.py"]
-
 
 def test_hook_event_labels_provider_on_event_and_session(tmp_path):
     repo_path = tmp_path / "docs-api"
-    (repo_path / "retrieval").mkdir(parents=True)
-    (repo_path / "retrieval" / "rerank.py").write_text("def rerank():\n    return []\n")
+    retrieval_dir = repo_path / "retrieval"
+    retrieval_dir.mkdir(parents=True)
+    (retrieval_dir / "rerank.py").write_text("def rerank():\n    return []\n")
 
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
     repo.initialize()
@@ -212,8 +208,9 @@ def test_hook_event_labels_provider_on_event_and_session(tmp_path):
 
 def test_hook_event_records_codex_session_provenance(tmp_path):
     repo_path = tmp_path / "docs-api"
-    (repo_path / "retrieval").mkdir(parents=True)
-    (repo_path / "retrieval" / "rerank.py").write_text("def rerank():\n    return []\n")
+    retrieval_dir = repo_path / "retrieval"
+    retrieval_dir.mkdir(parents=True)
+    (retrieval_dir / "rerank.py").write_text("def rerank():\n    return []\n")
 
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
     repo.initialize()
@@ -301,24 +298,26 @@ def test_claude_code_adapter_is_default_priority_provider(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# Step 3 — real topic extraction from repository evidence
+# Agentic topic discovery (ADR-0002) — real extraction from a repository.
+#
+# These tests run schema-only (initialize_schema) so the curated demo project is
+# never seeded — discovery operates on a clean project derived from the git repo.
 # --------------------------------------------------------------------------- #
 
-def test_extract_surfaces_untrailed_topics_but_none_checkable(git_repo, tmp_path):
+def test_extract_surfaces_verified_topics_from_a_real_repo(git_repo, tmp_path):
     repo_path, _sha = git_repo
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
-    repo.initialize()
+    repo.initialize_schema()
 
     result = repo.extract_or_refresh_topics(repo_path)
 
-    assert result["project"]["is_demo"] == 0
-    assert result["analysis_source"] == "deterministic"  # CI default analyst
+    # The deterministic analyst is the CI default; a Claude->deterministic
+    # fallback is recorded honestly as "deterministic", never as agent analysis.
+    assert result["analysis_source"] == "deterministic"
     assert result["surfaced"] >= 1
     assert result["considered"] > result["surfaced"]  # the analyst's gate cut some sites
     topics = result["topics"]
     assert topics
-    # Discovery grounds real candidates but never makes one checkable.
-    assert all(topic["checkable"] == 0 for topic in topics)
     assert topics[0]["risk_class"] == "persistence"
     assert "tenant" in topics[0]["title"].lower()
 
@@ -326,7 +325,7 @@ def test_extract_surfaces_untrailed_topics_but_none_checkable(git_repo, tmp_path
 def test_extracted_topic_carries_grounded_code_evidence(git_repo, tmp_path):
     repo_path, sha = git_repo
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
-    repo.initialize()
+    repo.initialize_schema()
 
     result = repo.extract_or_refresh_topics(repo_path)
     hero = repo.get_topic(result["topics"][0]["id"])
@@ -346,7 +345,7 @@ def test_extracted_topic_carries_grounded_code_evidence(git_repo, tmp_path):
 def test_extract_is_idempotent_and_revisions_stay_immutable(git_repo, tmp_path):
     repo_path, _sha = git_repo
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
-    repo.initialize()
+    repo.initialize_schema()
 
     first = repo.extract_or_refresh_topics(repo_path)
     second = repo.extract_or_refresh_topics(repo_path)
@@ -360,7 +359,7 @@ def test_extract_is_idempotent_and_revisions_stay_immutable(git_repo, tmp_path):
 def test_code_change_creates_a_new_revision(git_repo, tmp_path):
     repo_path, _sha = git_repo
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
-    repo.initialize()
+    repo.initialize_schema()
     first = repo.extract_or_refresh_topics(repo_path)
     hero_id = first["topics"][0]["id"]
 
@@ -380,7 +379,7 @@ def test_code_change_creates_a_new_revision(git_repo, tmp_path):
 def test_extract_records_an_auditable_analysis_run(git_repo, tmp_path):
     repo_path, _sha = git_repo
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
-    repo.initialize()
+    repo.initialize_schema()
 
     result = repo.extract_or_refresh_topics(repo_path)
     status = repo.get_analysis_status(result["project"]["slug"])
@@ -403,7 +402,7 @@ def test_analysis_unavailable_falls_back_to_last_verified_worklist(git_repo, tmp
 
     repo_path, _sha = git_repo
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
-    repo.initialize()
+    repo.initialize_schema()
 
     first = repo.extract_or_refresh_topics(repo_path)  # deterministic -> verified
     assert first["surfaced"] >= 1
@@ -421,7 +420,7 @@ def test_analysis_unavailable_falls_back_to_last_verified_worklist(git_repo, tmp
 def test_extracted_topic_exposes_derived_display_facts(git_repo, tmp_path):
     repo_path, _sha = git_repo
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
-    repo.initialize()
+    repo.initialize_schema()
 
     result = repo.extract_or_refresh_topics(repo_path)
     hero = result["topics"][0]
@@ -443,88 +442,13 @@ def test_ingestion_does_not_mint_topics_even_after_extraction(git_repo, tmp_path
     # an already-extracted repo reports existing topics but mints nothing new.
     repo_path, _sha = git_repo
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
-    repo.initialize()
-    repo.extract_or_refresh_topics(repo_path)
-    before = len(repo.list_topics(repo.list_projects()[0]["slug"]))
+    repo.initialize_schema()
+    extraction = repo.extract_or_refresh_topics(repo_path)
+    slug = extraction["project"]["slug"]
+    before = len(repo.list_topics(slug))
+    assert before >= 1
 
     repo.record_hook_event(event_type="post-commit", cwd=str(repo_path), head_sha="deadbeef")
 
-    after = len(repo.list_topics(repo.list_projects()[0]["slug"]))
+    after = len(repo.list_topics(slug))
     assert after == before
-
-
-# --------------------------------------------------------------------------- #
-# Step 2 — curated repo-derived check, gated on baseline-green -> mutant-red
-# --------------------------------------------------------------------------- #
-
-def test_curate_hero_validates_and_makes_one_topic_checkable(git_repo, tmp_path):
-    repo_path, sha = git_repo
-    repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
-    repo.initialize()
-
-    result = repo.install_repo_check_recipe(repo_path)
-
-    assert result["revision_sha"] == sha
-    assert result["validation"] == {
-        "baseline_passed": True,
-        "mutant_failed": True,
-        "target_test_failed": True,
-    }
-    hero = repo.get_topic(result["topic_id"])
-    assert hero["checkable"] == 1
-    assert hero["title"] == "Tenant isolation in retrieval"
-    # Exactly one topic is checkable; the rest remain curation candidates.
-    topics = repo.list_topics(result["project"]["slug"])
-    assert [t["checkable"] for t in topics].count(1) == 1
-
-
-def test_curated_repo_check_runs_red_at_pinned_revision_then_green(git_repo, tmp_path):
-    repo_path, _sha = git_repo
-    repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
-    repo.initialize()
-    result = repo.install_repo_check_recipe(repo_path)
-
-    check = repo.create_check(result["topic_id"])
-    assert check["test_command"] == "python -m pytest tests"
-
-    red = repo.run_check(check["id"])
-    assert red["passed"] is False
-    assert "test_search_never_returns_another_tenants_documents" in red["output"]
-
-    state = repo.read_check_file(check["id"], "retrieval/rerank.py")
-    repo.update_check_file(
-        check["id"],
-        "retrieval/rerank.py",
-        state["content"].replace(
-            "return list(documents)",
-            "return [doc for doc in documents if doc.tenant_id == tenant_id]",
-        ),
-    )
-    green = repo.run_check(check["id"])
-    assert green["passed"] is True
-
-
-def test_curate_refuses_a_recipe_that_does_not_turn_red(git_repo, tmp_path):
-    repo_path, _sha = git_repo
-    repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
-    repo.initialize()
-
-    # A no-op "mutation" leaves the suite green, so the recipe is untrustworthy.
-    no_op = RepoCheckSpec(
-        file=HERO_REPO_CHECK.file,
-        symbol=HERO_REPO_CHECK.symbol,
-        target_file=HERO_REPO_CHECK.target_file,
-        test_command=HERO_REPO_CHECK.test_command,
-        target_test=HERO_REPO_CHECK.target_test,
-        mutation_before=HERO_REPO_CHECK.mutation_before,
-        mutation_after=HERO_REPO_CHECK.mutation_before,
-    )
-
-    with pytest.raises(RecipeValidationError):
-        repo.install_repo_check_recipe(repo_path, spec=no_op)
-
-    # The topic stays a non-checkable candidate; nothing was persisted.
-    topic_id = repo._topic_id_for(
-        repo.list_projects()[0]["slug"], no_op.file, no_op.symbol
-    )
-    assert repo.get_topic(topic_id)["checkable"] == 0

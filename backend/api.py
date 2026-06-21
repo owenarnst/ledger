@@ -8,13 +8,7 @@ from pydantic import BaseModel
 
 from .hooks import DEFAULT_SPOOL_DIR, drain_spool, reset_ledger
 from .ingestion import DEFAULT_PROVIDER, adapter_for
-from .repository import (
-    DEFAULT_DB_PATH,
-    DEFAULT_SANDBOX_ROOT,
-    LedgerRepository,
-    RecipeValidationError,
-    TopicNotCheckableError,
-)
+from .repository import DEFAULT_DB_PATH, DEFAULT_SANDBOX_ROOT, LedgerRepository
 
 
 class FileUpdate(BaseModel):
@@ -26,8 +20,17 @@ class CoachRequest(BaseModel):
     provider: str | None = None
 
 
+class PseudocodeCommentsRequest(BaseModel):
+    file_path: str
+
+
+class AnswerRequest(BaseModel):
+    answers: dict[str, int]
+
+
 class CheckRequest(BaseModel):
-    topic_id: str
+    topic_id: str | None = None
+    difficulty: str | None = None
 
 
 class ReflectionRequest(BaseModel):
@@ -90,10 +93,6 @@ def create_app(
     def list_projects() -> list[dict]:
         return repo.list_projects()
 
-    @app.post("/api/seed-demo")
-    def seed_demo() -> dict:
-        return repo.seed_demo()
-
     @app.get("/api/topics")
     def list_all_topics() -> list[dict]:
         return repo.list_all_topics()
@@ -131,15 +130,6 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.post("/api/curate-hero")
-    def curate_hero(payload: ExtractRequest) -> dict:
-        try:
-            return repo.install_repo_check_recipe(payload.repo_path)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except RecipeValidationError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
     @app.get("/api/projects/{project_slug}/topics")
     def list_topics(project_slug: str) -> list[dict]:
         return repo.list_topics(project_slug)
@@ -168,21 +158,23 @@ def create_app(
 
     @app.post("/api/checks")
     def create_check_alias(payload: CheckRequest) -> dict:
+        if not payload.topic_id:
+            raise HTTPException(status_code=400, detail="topic_id is required")
         try:
-            return repo.create_check(payload.topic_id)
-        except TopicNotCheckableError as exc:
-            raise HTTPException(status_code=409, detail="topic is not checkable") from exc
+            return repo.create_check(payload.topic_id, difficulty=payload.difficulty)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="topic not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/topics/{topic_id}/checks")
-    def create_check(topic_id: str) -> dict:
+    def create_check(topic_id: str, payload: CheckRequest | None = None) -> dict:
         try:
-            return repo.create_check(topic_id)
-        except TopicNotCheckableError as exc:
-            raise HTTPException(status_code=409, detail="topic is not checkable") from exc
+            return repo.create_check(topic_id, difficulty=payload.difficulty if payload else None)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="topic not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/checks/{check_id}")
     def get_check(check_id: str) -> dict:
@@ -190,6 +182,26 @@ def create_app(
             return repo.get_check(check_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="check not found") from exc
+
+    @app.post("/api/checks/{check_id}/pseudocode-comments")
+    def pseudocode_comments(check_id: str, payload: PseudocodeCommentsRequest) -> dict:
+        try:
+            return repo.pseudocode_comments(check_id, payload.file_path)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="check not found") from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="file not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/checks/{check_id}/answers")
+    def submit_answers(check_id: str, payload: AnswerRequest) -> dict:
+        try:
+            return repo.submit_check_answers(check_id, payload.answers)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="check not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/checks/{check_id}/files/{file_path:path}")
     def read_file(check_id: str, file_path: str) -> dict:
