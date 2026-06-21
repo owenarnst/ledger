@@ -115,7 +115,7 @@ def test_easy_check_returns_multiple_choice_only_plan(tmp_path):
     assert "\n    return " in check["plan"]["questions"][1]["choices"][0]
 
 
-def test_medium_check_returns_question_then_sandbox_plan(tmp_path):
+def test_medium_check_returns_two_questions_then_sandbox_plan(tmp_path):
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes")
     repo.initialize()
 
@@ -123,7 +123,11 @@ def test_medium_check_returns_question_then_sandbox_plan(tmp_path):
 
     assert check["difficulty"] == "medium"
     assert check["template_id"] == "tenant-cache-medium"
-    assert [step["type"] for step in check["plan"]["steps"]] == ["multiple_choice", "sandbox"]
+    assert [step["type"] for step in check["plan"]["steps"]] == ["multiple_choice", "multiple_choice", "sandbox"]
+    assert check["plan"]["steps"][0]["question_id"] == "tenant-filter-purpose"
+    assert check["plan"]["steps"][1]["question_id"] == "tenant-filter-debug"
+    assert check["plan"]["questions"][0]["kind"] == "concept"
+    assert check["plan"]["questions"][1]["kind"] == "debugging"
 
 
 def test_hard_check_keeps_current_sandbox_plan(tmp_path):

@@ -53,6 +53,7 @@ HERO_TEMPLATES: dict[str, dict[str, Any]] = {
         "difficulty": "medium",
         "steps": [
             {"type": "multiple_choice", "question_id": "tenant-filter-purpose"},
+            {"type": "multiple_choice", "question_id": "tenant-filter-debug"},
             {"type": "sandbox"},
         ],
         "questions": [
@@ -67,7 +68,19 @@ HERO_TEMPLATES: dict[str, dict[str, Any]] = {
                 ],
                 "correct_index": 0,
                 "rationale": "The check is about tenant isolation, not ranking or object identity.",
-            }
+            },
+            {
+                "id": "tenant-filter-debug",
+                "kind": "debugging",
+                "prompt": "Which complete implementation should you write before moving into the sandbox?",
+                "choices": [
+                    "def visible_documents_for_tenant(documents: list[Document], tenant_id: str) -> list[Document]:\n    return [doc for doc in documents if doc.tenant_id == tenant_id]",
+                    "def visible_documents_for_tenant(documents: list[Document], tenant_id: str) -> list[Document]:\n    return list(documents)",
+                    "def visible_documents_for_tenant(documents: list[Document], tenant_id: str) -> list[Document]:\n    return sorted(documents, key=lambda doc: doc.score, reverse=True)",
+                ],
+                "correct_index": 0,
+                "rationale": "The sandbox fix is the same invariant in code: return only documents whose tenant_id matches the requested tenant.",
+            },
         ],
     },
     "hard": DEFAULT_PLAN,
