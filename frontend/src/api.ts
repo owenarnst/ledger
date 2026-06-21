@@ -133,8 +133,13 @@ export interface CheckResult {
   passed: boolean
 }
 
+// The coach is Claude-only; `model` echoes which Claude model answered (haiku |
+// sonnet | opus). See ADR-0004.
+export type CoachModel = 'haiku' | 'sonnet' | 'opus'
+
 export interface CoachResponse {
   response: string
+  model?: CoachModel
 }
 
 export interface PseudocodeCommentsResponse {
@@ -172,8 +177,8 @@ export const readFile = (checkId: string, filePath: string) => req<FileContent>(
 export const writeFile = (checkId: string, filePath: string, content: string) =>
   req<void>(`/api/checks/${cid(checkId)}/files/${filePath}`, { method: 'PUT', body: { content } })
 export const runCheck = (checkId: string) => req<CheckResult>(`/api/checks/${cid(checkId)}/run`, { method: 'POST' })
-export const askCoach = (checkId: string, question: string, provider?: string) =>
-  req<CoachResponse>(`/api/checks/${cid(checkId)}/coach`, { method: 'POST', body: { question, provider } })
+export const askCoach = (checkId: string, question: string, model?: CoachModel) =>
+  req<CoachResponse>(`/api/checks/${cid(checkId)}/coach`, { method: 'POST', body: { question, model } })
 export const generatePseudocodeComments = (checkId: string, filePath: string) =>
   req<PseudocodeCommentsResponse>(`/api/checks/${cid(checkId)}/pseudocode-comments`, { method: 'POST', body: { file_path: filePath } })
 export const submitAnswers = (checkId: string, answers: Record<string, number>) =>

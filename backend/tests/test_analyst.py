@@ -220,7 +220,7 @@ def test_parse_proposals_normalizes_bad_impact_and_confidence():
                 "invariant": "hold this",
                 "impact_level": "catastrophic",  # not a valid level
                 "code_anchors": [{"path": "x.py", "lineno": 1}],
-                "development_traces": [{"provider": "codex", "locator": "y.jsonl:2", "link_confidence": "vibes"}],
+                "development_traces": [{"provider": "claude_code", "locator": "y.jsonl:2", "link_confidence": "vibes"}],
             }
         ]
     )

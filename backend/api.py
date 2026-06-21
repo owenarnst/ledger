@@ -17,7 +17,7 @@ class FileUpdate(BaseModel):
 
 class CoachRequest(BaseModel):
     question: str
-    provider: str | None = None
+    model: str | None = None
 
 
 class PseudocodeCommentsRequest(BaseModel):
@@ -46,7 +46,7 @@ class CompleteCheckRequest(BaseModel):
 class CoachAliasRequest(BaseModel):
     check_id: str
     question: str
-    provider: str | None = None
+    model: str | None = None
 
 
 class HookEventRequest(BaseModel):
@@ -231,7 +231,7 @@ def create_app(
     @app.post("/api/checks/{check_id}/coach")
     def ask_coach(check_id: str, payload: CoachRequest) -> dict:
         try:
-            return repo.ask_coach(check_id, payload.question, provider=payload.provider)
+            return repo.ask_coach(check_id, payload.question, model=payload.model)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="check not found") from exc
         except ValueError as exc:
@@ -240,7 +240,7 @@ def create_app(
     @app.post("/api/coach")
     def ask_coach_alias(payload: CoachAliasRequest) -> dict:
         try:
-            return repo.ask_coach(payload.check_id, payload.question, provider=payload.provider)
+            return repo.ask_coach(payload.check_id, payload.question, model=payload.model)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="check not found") from exc
         except ValueError as exc:

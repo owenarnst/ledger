@@ -1,12 +1,14 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from backend import exercise_generation
 from backend.__main__ import main
 from backend.api import create_app
 from backend.db import connect
 from backend.hooks import HookSpool, build_session_start_nudge, reset_ledger
-from backend.ingestion import ClaudeCodeAdapter, CodexAdapter
+from backend.ingestion import ClaudeCodeAdapter, GitAdapter
 from backend.repository import LedgerRepository
 
 
@@ -232,46 +234,30 @@ def test_medium_check_uses_generated_implementation_hint_then_sandbox_plan(tmp_p
     assert check["plan"]["questions"][1]["choices"][0].startswith("def visible_documents_for_tenant")
 
 
-def test_cli_exercise_generator_falls_back_from_claude_to_codex(monkeypatch):
+def test_cli_exercise_generator_is_claude_only_without_fallback(monkeypatch):
+    # Codex was dropped (ADR-0004): generation runs on Claude alone, so a failed
+    # Claude response surfaces the error instead of silently trying a fallback.
     calls = []
 
     def fake_run_generator_cli(provider, prompt, timeout_seconds):
         calls.append(provider)
-        if provider == "claude":
-            return ""
-        return json.dumps(
-            {
-                "template_id": "generated-medium",
-                "difficulty": "medium",
-                "steps": [
-                    {"type": "multiple_choice", "question_id": "tenant-filter-purpose"},
-                    {"type": "sandbox"},
-                ],
-                "questions": [
-                    {
-                        "id": "tenant-filter-purpose",
-                        "kind": "concept",
-                        "prompt": "What invariant matters?",
-                        "choices": ["Tenant isolation", "Score ordering", "Text length"],
-                        "correct_index": 0,
-                        "rationale": "The sandbox fix must preserve tenant isolation.",
-                    }
-                ],
-            }
-        )
+        return ""
 
     monkeypatch.setattr(exercise_generation, "run_generator_cli", fake_run_generator_cli)
-    generator = exercise_generation.CliExercisePlanGenerator(provider="claude", fallback_provider="codex")
+    generator = exercise_generation.CliExercisePlanGenerator(provider="claude")
 
-    plan = generator.generate_plan(
-        topic={"title": "Tenant visibility", "summary": "Filter tenant documents."},
-        revision={"invariant": "Candidate documents must be filtered by tenant_id.", "code_path": "backend/search.py"},
-        difficulty="medium",
-    )
+    with pytest.raises(ValueError):
+        generator.generate_plan(
+            topic={"title": "Tenant visibility", "summary": "Filter tenant documents."},
+            revision={"invariant": "Candidate documents must be filtered by tenant_id.", "code_path": "backend/search.py"},
+            difficulty="medium",
+        )
 
-    assert calls == ["claude", "codex"]
-    assert plan["template_id"] == "generated-medium"
-    assert [step["type"] for step in plan["steps"]] == ["multiple_choice", "sandbox"]
+    assert calls == ["claude"]
+
+
+def test_generation_provider_order_is_single_when_no_fallback():
+    assert exercise_generation.generation_provider_order("claude", None) == ["claude"]
 
 
 def test_generated_exercise_plan_is_stored_and_reused(tmp_path):
@@ -458,12 +444,14 @@ def test_claude_adapter_reads_jsonl_session_records(tmp_path):
     assert events[0].payload["source_path"].endswith("session.jsonl:2")
 
 
-def test_codex_adapter_reads_jsonl_session_records(tmp_path):
-    log_path = tmp_path / "codex.jsonl"
+def test_non_default_adapter_reads_tool_call_jsonl_records(tmp_path):
+    # Exercises the alternate `tool_calls`/`path` record shape via a second
+    # ingestion adapter, proving the reader stays provider-blind (ADR-0001).
+    log_path = tmp_path / "session.jsonl"
     log_path.write_text(
         json.dumps(
             {
-                "session_id": "codex-session-1",
+                "session_id": "git-session-1",
                 "cwd": str(tmp_path / "repo"),
                 "tool_calls": [
                     {"name": "Read", "path": "retrieval/rerank.py"},
@@ -474,11 +462,11 @@ def test_codex_adapter_reads_jsonl_session_records(tmp_path):
         + "\n"
     )
 
-    events = CodexAdapter().read_sessions(tmp_path)
+    events = GitAdapter().read_sessions(tmp_path)
 
     assert len(events) == 1
-    assert events[0].provider == "codex"
-    assert events[0].payload["session_id"] == "codex-session-1"
+    assert events[0].provider == "git"
+    assert events[0].payload["session_id"] == "git-session-1"
     assert events[0].payload["changed_files"] == ["retrieval/rerank.py"]
 
 
@@ -486,12 +474,12 @@ def test_import_provider_sessions_records_session_provenance(tmp_path):
     repo_path = tmp_path / "repo"
     (repo_path / "retrieval").mkdir(parents=True)
     (repo_path / "retrieval" / "rerank.py").write_text("def rerank():\n    return []\n")
-    log_path = tmp_path / "logs" / "codex.jsonl"
+    log_path = tmp_path / "logs" / "session.jsonl"
     log_path.parent.mkdir()
     log_path.write_text(
         json.dumps(
             {
-                "session_id": "codex-session-1",
+                "session_id": "git-session-1",
                 "cwd": str(repo_path),
                 "tool_calls": [{"name": "Edit", "path": "retrieval/rerank.py"}],
             }
@@ -501,12 +489,12 @@ def test_import_provider_sessions_records_session_provenance(tmp_path):
     repo = LedgerRepository(tmp_path / "ledger.db")
     repo.initialize()
 
-    result = repo.import_provider_sessions("codex", log_path.parent)
+    result = repo.import_provider_sessions("git", log_path.parent)
 
     # Importing sessions records provenance only; it never mints a Topic.
     assert result["imported"] == 1
     assert result["topics"] == []
-    assert repo.get_session("codex-session-1")["provider"] == "codex"
+    assert repo.get_session("git-session-1")["provider"] == "git"
 
 
 def test_hook_spool_drains_fifo_json_events(tmp_path):

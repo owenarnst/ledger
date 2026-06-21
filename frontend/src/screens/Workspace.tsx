@@ -44,8 +44,8 @@ interface WorkspaceProps {
   askCoachAboutPrints: () => void
   thread: any[]
   coachInput: string
-  coachProvider: 'claude-code' | 'codex-exec'
-  onCoachProvider: (provider: 'claude-code' | 'codex-exec') => void
+  coachModel: api.CoachModel
+  onCoachModel: (model: api.CoachModel) => void
   onCoachInput: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
   onCoachKey: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
   sendCoach: () => void
@@ -115,8 +115,8 @@ export default function Workspace({
   askCoachAboutPrints,
   thread,
   coachInput,
-  coachProvider,
-  onCoachProvider,
+  coachModel,
+  onCoachModel,
   onCoachInput,
   onCoachKey,
   sendCoach,
@@ -654,12 +654,14 @@ export default function Workspace({
           <div style={{ flex: 'none', borderTop: '1px solid var(--bd)', background: 'var(--panel)', padding: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
               <select
-                value={coachProvider}
-                onChange={(e) => onCoachProvider(e.target.value as 'claude-code' | 'codex-exec')}
+                value={coachModel}
+                onChange={(e) => onCoachModel(e.target.value as api.CoachModel)}
+                title="Which Claude model answers — a cost/quality dial"
                 style={{ background: 'var(--bg)', border: '1px solid var(--bd2)', color: 'var(--tx)', borderRadius: 8, padding: '7px 9px', fontFamily: "'Geist', sans-serif", fontSize: 12.5, outline: 'none' }}
               >
-                <option value="claude-code">Claude</option>
-                <option value="codex-exec">Codex</option>
+                <option value="haiku">Claude Haiku</option>
+                <option value="sonnet">Claude Sonnet</option>
+                <option value="opus">Claude Opus</option>
               </select>
             </div>
 	            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>

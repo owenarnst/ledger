@@ -1,4 +1,6 @@
-from backend.coach import ClaudeCoach, CodexCoach, create_coach
+import pytest
+
+from backend.coach import COACH_MODELS, DEFAULT_COACH_MODEL, ClaudeCoach, create_coach
 
 
 def test_claude_coach_uses_claude_code_with_tools_denied():
@@ -16,6 +18,11 @@ def test_claude_coach_uses_claude_code_with_tools_denied():
     assert "Edit" in disallowed
 
 
+def test_claude_coach_passes_the_selected_model():
+    command = ClaudeCoach(binary="claude", model_id="haiku").build_command()
+    assert command[command.index("--model") + 1] == "haiku"
+
+
 def test_claude_prompt_excludes_code_and_diff():
     coach = ClaudeCoach(binary="claude")
     prompt = coach.build_prompt(
@@ -31,26 +38,22 @@ def test_claude_prompt_excludes_code_and_diff():
     assert "FAILED tests/test_rerank.py" in prompt
 
 
-def test_codex_coach_uses_noninteractive_exec_with_read_only_sandbox():
-    coach = CodexCoach(binary="codex")
-    command = coach.build_command()
-
-    assert command[:4] == ["codex", "-a", "never", "exec"]
-    assert command[-1] == "-"
-    assert "--sandbox" in command
-    assert command[command.index("--sandbox") + 1] == "read-only"
-    assert "--skip-git-repo-check" in command
-    assert "--ephemeral" in command
+def test_create_coach_defaults_to_sonnet():
+    coach = create_coach()
+    assert isinstance(coach, ClaudeCoach)
+    assert coach.model_id == DEFAULT_COACH_MODEL == "sonnet"
 
 
-def test_create_coach_accepts_codex_provider():
-    assert isinstance(create_coach("codex"), CodexCoach)
+def test_create_coach_accepts_each_supported_model():
+    for model in COACH_MODELS:
+        coach = create_coach(model)
+        assert isinstance(coach, ClaudeCoach)
+        assert coach.model_id == model
 
 
-def test_create_coach_accepts_explicit_cli_provider_aliases():
-    assert isinstance(create_coach("claude-code"), ClaudeCoach)
-    assert isinstance(create_coach("claude-print"), ClaudeCoach)
-    assert isinstance(create_coach("codex-exec"), CodexCoach)
+def test_create_coach_rejects_an_unknown_model():
+    with pytest.raises(ValueError):
+        create_coach("gpt-4")
 
 
 def test_missing_cli_binary_returns_unavailable_message():

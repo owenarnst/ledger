@@ -25,7 +25,7 @@ class ExercisePlanGenerator(Protocol):
 @dataclass(frozen=True)
 class CliExercisePlanGenerator:
     provider: str = "claude"
-    fallback_provider: str = "codex"
+    fallback_provider: str | None = None
     timeout_seconds: int = 45
 
     def generate_plan(
@@ -99,7 +99,7 @@ def fallback_plan(difficulty: str) -> dict[str, Any]:
     return plan
 
 
-def generation_provider_order(primary: str, fallback: str) -> list[str]:
+def generation_provider_order(primary: str, fallback: str | None) -> list[str]:
     providers = []
     for provider in [primary, fallback]:
         selected = (provider or "").lower()
@@ -146,8 +146,6 @@ def run_generator_cli(provider: str, prompt: str, timeout_seconds: int) -> str:
     selected = (provider or os.environ.get("LEDGER_EXERCISE_PROVIDER") or "claude").lower()
     if selected in {"claude", "claude-code"}:
         command = ["claude", "-p", "--output-format", "json"]
-    elif selected in {"codex", "codex-exec"}:
-        command = ["codex", "exec", "--sandbox", "workspace-write", "--skip-git-repo-check", "--ephemeral", "-"]
     else:
         raise ValueError(f"unsupported exercise provider: {selected}")
     try:
@@ -164,13 +162,11 @@ def run_generator_cli(provider: str, prompt: str, timeout_seconds: int) -> str:
         return ""
     if proc.returncode != 0:
         return ""
-    if selected in {"claude", "claude-code"}:
-        try:
-            payload = json.loads(proc.stdout)
-            return payload.get("result") or proc.stdout
-        except json.JSONDecodeError:
-            return proc.stdout
-    return proc.stdout
+    try:
+        payload = json.loads(proc.stdout)
+        return payload.get("result") or proc.stdout
+    except json.JSONDecodeError:
+        return proc.stdout
 
 
 def parse_plan_json(response: str) -> dict[str, Any]:

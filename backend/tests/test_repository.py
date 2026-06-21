@@ -1,6 +1,6 @@
 from backend.db import connect, initialize_schema
 from backend.repository import LedgerRepository
-from backend.ingestion import ClaudeCodeAdapter, CodexAdapter
+from backend.ingestion import ClaudeCodeAdapter, GitAdapter
 
 
 def test_repository_seeds_demo_project_and_topics(tmp_path):
@@ -207,7 +207,9 @@ def test_hook_event_labels_provider_on_event_and_session(tmp_path):
     assert repo.get_session("claude-session-x")["provider"] == "claude_code"
 
 
-def test_hook_event_records_codex_session_provenance(tmp_path):
+def test_hook_event_records_non_default_provider_provenance(tmp_path):
+    # Provenance stays provider-labeled for any supported adapter (ADR-0001);
+    # exercised here through the second ingestion adapter (git).
     repo_path = tmp_path / "docs-api"
     retrieval_dir = repo_path / "retrieval"
     retrieval_dir.mkdir(parents=True)
@@ -217,32 +219,32 @@ def test_hook_event_records_codex_session_provenance(tmp_path):
     repo.initialize()
 
     result = repo.record_hook_event(
-        provider="codex",
+        provider="git",
         event_type="SessionStart",
         cwd=str(repo_path),
         branch="main",
         head_sha="abc123",
         payload={
             "changed_files": ["retrieval/rerank.py"],
-            "session_id": "codex-session-1",
-            "source_path": "~/.codex/sessions/session-1.jsonl",
+            "session_id": "git-session-1",
+            "source_path": "~/repo/.git/log:1",
             "tool_sequence": ["Read retrieval/rerank.py", "Edit retrieval/rerank.py"],
             "link_confidence": "hand_verified",
         },
     )
 
-    assert result["event"]["provider"] == "codex"
+    assert result["event"]["provider"] == "git"
     assert result["topics"] == []
-    session = repo.get_session("codex-session-1")
-    assert session["provider"] == "codex"
-    assert session["source_path"] == "~/.codex/sessions/session-1.jsonl"
+    session = repo.get_session("git-session-1")
+    assert session["provider"] == "git"
+    assert session["source_path"] == "~/repo/.git/log:1"
 
 
-def test_codex_adapter_normalizes_to_provider_labeled_event(tmp_path):
+def test_non_default_adapter_normalizes_to_provider_labeled_event(tmp_path):
     repo_path = tmp_path / "docs-api"
     repo_path.mkdir()
 
-    event = CodexAdapter().normalize(
+    event = GitAdapter().normalize(
         {
             "event_type": "SessionStart",
             "cwd": str(repo_path),
@@ -252,31 +254,31 @@ def test_codex_adapter_normalizes_to_provider_labeled_event(tmp_path):
         }
     )
 
-    assert event.provider == "codex"
+    assert event.provider == "git"
     assert event.cwd == str(repo_path)
     assert event.payload["changed_files"] == ["retrieval/rerank.py"]
 
 
-def test_codex_adapter_preserves_receipt_grounding_fields(tmp_path):
+def test_non_default_adapter_preserves_receipt_grounding_fields(tmp_path):
     repo_path = tmp_path / "docs-api"
     repo_path.mkdir()
 
-    event = CodexAdapter().normalize(
+    event = GitAdapter().normalize(
         {
             "event_type": "SessionStart",
             "cwd": str(repo_path),
             "branch": "main",
             "head_sha": "abc123",
             "changed_files": ["retrieval/rerank.py"],
-            "session_id": "codex-session-1",
-            "source_path": "~/.codex/sessions/session-1.jsonl",
+            "session_id": "git-session-1",
+            "source_path": "~/repo/.git/log:1",
             "tool_sequence": ["Read retrieval/rerank.py", "Edit retrieval/rerank.py"],
             "link_confidence": "hand_verified",
         }
     )
 
-    assert event.payload["session_id"] == "codex-session-1"
-    assert event.payload["source_path"] == "~/.codex/sessions/session-1.jsonl"
+    assert event.payload["session_id"] == "git-session-1"
+    assert event.payload["source_path"] == "~/repo/.git/log:1"
     assert event.payload["tool_sequence"] == ["Read retrieval/rerank.py", "Edit retrieval/rerank.py"]
     assert event.payload["link_confidence"] == "hand_verified"
 

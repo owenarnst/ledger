@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 
 DEFAULT_PROVIDER = "claude_code"
-SUPPORTED_PROVIDERS = {DEFAULT_PROVIDER, "codex", "git"}
+SUPPORTED_PROVIDERS = {DEFAULT_PROVIDER, "git"}
 
 
 @dataclass(frozen=True)
@@ -137,11 +137,6 @@ class ClaudeCodeAdapter(BaseProviderAdapter):
         super().__init__(DEFAULT_PROVIDER)
 
 
-class CodexAdapter(BaseProviderAdapter):
-    def __init__(self) -> None:
-        super().__init__("codex")
-
-
 class GitAdapter(BaseProviderAdapter):
     def __init__(self) -> None:
         super().__init__("git")
@@ -151,8 +146,6 @@ def adapter_for(provider: str | None) -> ProviderAdapter:
     selected = provider or DEFAULT_PROVIDER
     if selected == DEFAULT_PROVIDER:
         return ClaudeCodeAdapter()
-    if selected == "codex":
-        return CodexAdapter()
     if selected == "git":
         return GitAdapter()
     raise ValueError(f"unsupported provider: {selected}")
