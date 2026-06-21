@@ -17,6 +17,7 @@ const COACH_CHIPS = [
 ]
 
 const WITHHELD = /cannot provide (?:code|a patch)|can't (?:hand|give) you the patch|cannot give you the patch/i
+const CODE_CHOICE = /^(return|if|for|while|const|let|def|\[|\{)/
 
 type Phase = 'idle' | 'creating' | 'running' | 'fail' | 'pass' | 'error'
 
@@ -145,6 +146,7 @@ export default function Workspace({
   const easyMode = check?.difficulty === 'easy'
   const allMcAnswered = mcSteps.every((step) => step.question_id && answers[step.question_id] !== undefined)
   const canShowSandbox = !plan || check?.difficulty === 'hard' || (hasSandboxStep && (mcSteps.length === 0 || answerResults.length > 0))
+  const correctCount = answerResults.filter((item) => item.correct).length
 
   const runBtnStyle = {
     display: 'inline-flex',
@@ -261,22 +263,41 @@ export default function Workspace({
               </div>
 
               {mcSteps.length > 0 && (
-                <div className="lg-scroll" style={{ flex: easyMode ? 1 : 'none', maxHeight: easyMode ? undefined : 240, overflow: 'auto', borderBottom: '1px solid var(--bd)', background: 'var(--panel)', padding: 16 }}>
-                  <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--faint)', marginBottom: 10 }}>
-                    {check?.difficulty} check
+                <div
+                  className="lg-scroll"
+                  style={{
+                    flex: easyMode ? 1 : 'none',
+                    maxHeight: easyMode ? undefined : 290,
+                    overflow: 'auto',
+                    borderBottom: '1px solid var(--bd)',
+                    background: 'radial-gradient(circle at top left, rgba(200,116,77,0.12), transparent 34%), var(--panel)',
+                    padding: 18,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(200,116,77,0.14)', border: '1px solid rgba(200,116,77,0.32)', color: 'var(--accent)', fontFamily: mono, fontSize: 13 }}>
+                      ?
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: '-0.01em' }}>{check?.difficulty === 'easy' ? 'Reason through the fix' : 'Guided checkpoint'}</div>
+                      <div style={{ marginTop: 2, fontFamily: mono, fontSize: 10.5, color: 'var(--faint)' }}>
+                        {answerResults.length > 0 ? `${correctCount}/${answerResults.length} correct` : `${mcSteps.length} required ${mcSteps.length === 1 ? 'question' : 'questions'}`}
+                      </div>
+                    </div>
                   </div>
                   {mcSteps.map((step) => {
                     const q = step.question_id ? questionsById.get(step.question_id) : undefined
                     if (!q) return null
                     const result = answerResults.find((item) => item.question_id === q.id)
                     return (
-                      <div key={q.id} style={{ border: '1px solid var(--bd2)', borderRadius: 10, padding: 13, marginBottom: 10, background: 'var(--bg)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 9 }}>
-                          <span style={{ fontFamily: mono, fontSize: 10, color: 'var(--accent)', border: '1px solid rgba(200,116,77,0.28)', borderRadius: 5, padding: '2px 6px' }}>{q.kind}</span>
-                          <div style={{ fontSize: 13.5, fontWeight: 600 }}>{q.prompt}</div>
+                      <div key={q.id} style={{ border: `1px solid ${result ? (result.correct ? 'rgba(95,176,126,0.35)' : 'rgba(217,106,94,0.35)') : 'var(--bd2)'}`, borderRadius: 13, padding: 15, marginBottom: 12, background: 'rgba(20,19,16,0.72)', boxShadow: '0 10px 24px rgba(0,0,0,0.12)' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 11 }}>
+                          <span style={{ fontFamily: mono, fontSize: 10, color: q.kind === 'debugging' ? 'var(--green)' : 'var(--accent)', border: `1px solid ${q.kind === 'debugging' ? 'rgba(95,176,126,0.32)' : 'rgba(200,116,77,0.28)'}`, borderRadius: 6, padding: '3px 7px', textTransform: 'uppercase' }}>{q.kind}</span>
+                          <div style={{ fontSize: 14, fontWeight: 650, lineHeight: 1.35 }}>{q.prompt}</div>
                         </div>
                         {q.choices.map((choice, index) => {
                           const selected = answers[q.id] === index
+                          const isCode = CODE_CHOICE.test(choice.trim())
                           return (
                             <button
                               key={choice}
@@ -285,21 +306,29 @@ export default function Workspace({
                                 display: 'block',
                                 width: '100%',
                                 textAlign: 'left',
-                                marginTop: 6,
-                                padding: '8px 10px',
-                                borderRadius: 8,
+                                marginTop: 8,
+                                padding: isCode ? '10px 12px' : '9px 11px',
+                                borderRadius: 10,
                                 border: `1px solid ${selected ? 'var(--accent)' : 'var(--bd2)'}`,
-                                background: selected ? 'rgba(200,116,77,0.12)' : 'var(--panel2)',
+                                background: selected ? 'rgba(200,116,77,0.14)' : 'rgba(255,255,255,0.025)',
                                 color: 'var(--tx)',
                                 cursor: 'pointer',
+                                boxShadow: selected ? 'inset 3px 0 0 var(--accent)' : 'none',
                               }}
                             >
-                              {choice}
+                              <span style={{ display: 'flex', alignItems: 'flex-start', gap: 9 }}>
+                                <span style={{ flex: 'none', width: 18, height: 18, borderRadius: '50%', border: `1px solid ${selected ? 'var(--accent)' : 'var(--bd2)'}`, background: selected ? 'var(--accent)' : 'transparent', marginTop: isCode ? 1 : 0 }} />
+                                {isCode ? (
+                                  <code style={{ fontFamily: mono, fontSize: 12.5, lineHeight: 1.55, color: 'var(--tx)', whiteSpace: 'pre-wrap' }}>{choice}</code>
+                                ) : (
+                                  <span style={{ fontSize: 13, lineHeight: 1.45 }}>{choice}</span>
+                                )}
+                              </span>
                             </button>
                           )
                         })}
                         {result && (
-                          <div style={{ marginTop: 9, color: result.correct ? 'var(--green)' : 'var(--red)', fontSize: 12.5, lineHeight: 1.45 }}>
+                          <div style={{ marginTop: 11, padding: '9px 10px', borderRadius: 9, background: result.correct ? 'rgba(95,176,126,0.08)' : 'rgba(217,106,94,0.08)', border: `1px solid ${result.correct ? 'rgba(95,176,126,0.22)' : 'rgba(217,106,94,0.22)'}`, color: result.correct ? 'var(--green)' : 'var(--red)', fontSize: 12.5, lineHeight: 1.45 }}>
                             {result.correct ? 'Correct. ' : 'Not quite. '}
                             <span style={{ color: 'var(--mut)' }}>{result.rationale}</span>
                           </div>
@@ -316,7 +345,7 @@ export default function Workspace({
                       border: 'none',
                       borderRadius: 8,
                       padding: '9px 14px',
-                      fontWeight: 600,
+                      fontWeight: 700,
                       cursor: allMcAnswered ? 'pointer' : 'default',
                     }}
                   >

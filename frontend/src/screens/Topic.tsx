@@ -3,7 +3,7 @@
 // / L2 tool-chips + summary / L3 imported session record). Post-check: Practice
 // history. Everything is provider-labeled from the backend evidence — the hero
 // is Claude-authored here (ADR-0001 spine), not the design's placeholder Codex.
-import { Fragment } from 'react'
+import { Fragment, useState } from 'react'
 import { badge, chipPlain, chipRisk, toolChip, chipForKind } from '../theme'
 import { deriveReceipt, riskLabel } from '../adapt'
 import * as api from '../api'
@@ -21,6 +21,7 @@ interface TopicProps {
 }
 
 export default function Topic({ detail, heroPracticed, histStats, showLog, onToggleLog, onStartCheck, onBack }: TopicProps) {
+  const [selectedDifficulty, setSelectedDifficulty] = useState<api.Difficulty>('medium')
   const r = deriveReceipt(detail)
   const canCheck = !!detail.current_revision
   const heroBadgeCss = heroPracticed ? badge('practiced') : badge('recommended')
@@ -62,32 +63,55 @@ export default function Topic({ detail, heroPracticed, histStats, showLog, onTog
               Ownership check recommended
             </div>
           </div>
-          <div style={{ flex: 'none', display: 'flex', gap: 9, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <div style={{ flex: 'none', minWidth: 310, display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 9 }}>
             {canCheck ? (
-              [
-                { difficulty: 'easy' as api.Difficulty, label: 'Easy: multiple choice' },
-                { difficulty: 'medium' as api.Difficulty, label: 'Medium: guided debug' },
-                { difficulty: 'hard' as api.Difficulty, label: heroPracticed ? 'Hard: practice again' : 'Hard: sandbox' },
-              ].map((item) => (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 4, padding: 4, border: '1px solid var(--bd2)', borderRadius: 11, background: 'var(--panel)' }}>
+                  {[
+                    { difficulty: 'easy' as api.Difficulty, label: 'Easy', sub: 'quiz' },
+                    { difficulty: 'medium' as api.Difficulty, label: 'Medium', sub: 'guided' },
+                    { difficulty: 'hard' as api.Difficulty, label: 'Hard', sub: 'sandbox' },
+                  ].map((item) => {
+                    const active = selectedDifficulty === item.difficulty
+                    return (
+                      <button
+                        key={item.difficulty}
+                        onClick={() => setSelectedDifficulty(item.difficulty)}
+                        style={{
+                          border: 'none',
+                          borderRadius: 8,
+                          padding: '8px 8px 7px',
+                          background: active ? 'var(--accent)' : 'transparent',
+                          color: active ? '#1c140f' : 'var(--mut)',
+                          cursor: 'pointer',
+                          textAlign: 'center',
+                          boxShadow: active ? '0 1px 0 rgba(0,0,0,0.2)' : 'none',
+                        }}
+                      >
+                        <div style={{ fontSize: 12.5, fontWeight: 700 }}>{item.label}</div>
+                        <div style={{ marginTop: 1, fontFamily: mono, fontSize: 9.5, opacity: 0.78 }}>{item.sub}</div>
+                      </button>
+                    )
+                  })}
+                </div>
                 <button
-                  key={item.difficulty}
-                  onClick={() => onStartCheck(item.difficulty)}
+                  onClick={() => onStartCheck(selectedDifficulty)}
                   style={{
-                    background: item.difficulty === 'hard' ? 'var(--accent)' : 'var(--panel2)',
-                    color: item.difficulty === 'hard' ? '#1c140f' : 'var(--tx)',
-                    border: item.difficulty === 'hard' ? 'none' : '1px solid var(--bd2)',
+                    background: 'linear-gradient(180deg, var(--accent), #b9673f)',
+                    color: '#1c140f',
+                    border: 'none',
                     borderRadius: 9,
-                    padding: '10px 14px',
+                    padding: '11px 16px',
                     fontFamily: "'Geist', sans-serif",
                     fontSize: 13,
-                    fontWeight: 600,
+                    fontWeight: 700,
                     cursor: 'pointer',
-                    boxShadow: item.difficulty === 'hard' ? '0 1px 0 rgba(0,0,0,0.2)' : 'none',
+                    boxShadow: '0 1px 0 rgba(0,0,0,0.2)',
                   }}
                 >
-                  {item.label}
+                  Start {selectedDifficulty} check →
                 </button>
-              ))
+              </>
             ) : (
               <button
                 disabled

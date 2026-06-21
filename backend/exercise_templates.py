@@ -39,9 +39,9 @@ HERO_TEMPLATES: dict[str, dict[str, Any]] = {
                 "kind": "debugging",
                 "prompt": "Which solution best fixes the failing behavior?",
                 "choices": [
-                    "Return only documents whose tenant_id matches the requested tenant_id.",
-                    "Return all documents and rely on a later caller to filter.",
-                    "Sort documents by score and return the highest scoring documents.",
+                    "return [doc for doc in documents if doc.tenant_id == tenant_id]",
+                    "return list(documents)",
+                    "return sorted(documents, key=lambda doc: doc.score, reverse=True)",
                 ],
                 "correct_index": 0,
                 "rationale": "The failing test proves the function must filter by tenant before returning results.",
