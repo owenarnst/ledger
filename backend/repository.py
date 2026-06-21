@@ -8,7 +8,8 @@ from typing import Any
 
 from .coach import Coach, create_coach
 from .db import connect, initialize_schema
-from .exercise_templates import public_plan, template_for, validate_answers
+from .exercise_generation import CliExercisePlanGenerator, ExercisePlanGenerator, fallback_plan, normalize_difficulty
+from .exercise_templates import public_plan, validate_answers
 from .ingestion import DEFAULT_PROVIDER, IngestionEvent, adapter_for
 from .pseudocode import build_pseudocode_comments
 from .sandbox import create_hero_sandbox, run_pytest
@@ -24,10 +25,12 @@ class LedgerRepository:
         db_path: Path = DEFAULT_DB_PATH,
         sandbox_root: Path = DEFAULT_SANDBOX_ROOT,
         coach: Coach | None = None,
+        exercise_generator: ExercisePlanGenerator | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.sandbox_root = Path(sandbox_root)
         self.coach = coach or create_coach()
+        self.exercise_generator = exercise_generator or CliExercisePlanGenerator()
 
     def initialize(self) -> None:
         with connect(self.db_path) as conn:
@@ -357,13 +360,14 @@ class LedgerRepository:
 
     def create_check(self, topic_id: str, difficulty: str | None = None) -> dict[str, Any]:
         check_id = uuid.uuid4().hex
-        template = template_for(topic_id, difficulty)
+        selected_difficulty = normalize_difficulty(difficulty)
         sandbox_path = self.sandbox_root / check_id
         create_hero_sandbox(sandbox_path)
         with connect(self.db_path) as conn:
             revision = self._current_revision(conn, topic_id)
             if not revision:
                 raise KeyError(topic_id)
+            template = self._exercise_plan_for_check(conn, topic_id, dict(revision), selected_difficulty)
             conn.execute(
                 """
                 INSERT INTO checks
@@ -390,6 +394,41 @@ class LedgerRepository:
             )
             conn.commit()
         return self.get_check(check_id)
+
+    def _exercise_plan_for_check(self, conn: Any, topic_id: str, revision: dict[str, Any], difficulty: str) -> dict[str, Any]:
+        cached = conn.execute(
+            """
+            SELECT plan_json
+            FROM exercise_plans
+            WHERE topic_revision_id = ? AND difficulty = ?
+            """,
+            (revision["id"], difficulty),
+        ).fetchone()
+        if cached:
+            return json.loads(cached["plan_json"])
+
+        topic = conn.execute("SELECT * FROM topics WHERE id = ?", (topic_id,)).fetchone()
+        if not topic:
+            raise KeyError(topic_id)
+        try:
+            plan = self.exercise_generator.generate_plan(topic=dict(topic), revision=revision, difficulty=difficulty)
+        except Exception:
+            plan = fallback_plan(difficulty)
+        conn.execute(
+            """
+            INSERT INTO exercise_plans (id, topic_id, topic_revision_id, difficulty, provider, plan_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                uuid.uuid4().hex,
+                topic_id,
+                revision["id"],
+                difficulty,
+                getattr(self.exercise_generator, "provider", "fallback"),
+                json.dumps(plan, sort_keys=True),
+            ),
+        )
+        return plan
 
     def get_check(self, check_id: str) -> dict[str, Any]:
         with connect(self.db_path) as conn:

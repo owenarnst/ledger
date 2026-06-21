@@ -128,6 +128,17 @@ CREATE TABLE IF NOT EXISTS checks (
     completed_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS exercise_plans (
+    id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL REFERENCES topics(id),
+    topic_revision_id TEXT NOT NULL REFERENCES topic_revisions(id),
+    difficulty TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    plan_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(topic_revision_id, difficulty)
+);
+
 CREATE TABLE IF NOT EXISTS attempts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     check_id TEXT NOT NULL REFERENCES checks(id),
@@ -169,6 +180,18 @@ MIGRATIONS = [
     "ALTER TABLE checks ADD COLUMN difficulty TEXT NOT NULL DEFAULT 'hard'",
     "ALTER TABLE checks ADD COLUMN template_id TEXT NOT NULL DEFAULT 'tenant-cache-hard'",
     "ALTER TABLE checks ADD COLUMN plan_json TEXT NOT NULL DEFAULT '{\"difficulty\":\"hard\",\"template_id\":\"tenant-cache-hard\",\"steps\":[{\"type\":\"sandbox\"}],\"questions\":[]}'",
+    """
+    CREATE TABLE IF NOT EXISTS exercise_plans (
+        id TEXT PRIMARY KEY,
+        topic_id TEXT NOT NULL REFERENCES topics(id),
+        topic_revision_id TEXT NOT NULL REFERENCES topic_revisions(id),
+        difficulty TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        plan_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(topic_revision_id, difficulty)
+    )
+    """,
 ]
 
 
