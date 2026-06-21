@@ -8,9 +8,9 @@ def test_repository_seeds_demo_project_and_topics(tmp_path):
     repo.initialize()
 
     projects = repo.list_projects()
-    assert [project["slug"] for project in projects] == ["docs-api"]
+    assert [project["slug"] for project in projects] == ["docs-search-api"]
 
-    topics = repo.list_topics("docs-api")
+    topics = repo.list_topics("docs-search-api")
     assert len(topics) == 4
     assert topics[0]["state"] == "check_recommended"
     assert "tenant" in topics[0]["title"].lower()
@@ -53,13 +53,13 @@ def test_initialize_backfills_missing_seeded_revision(tmp_path):
         initialize_schema(conn)
         conn.execute(
             "INSERT INTO projects (id, slug, name, repo_path) VALUES (?, ?, ?, ?)",
-            ("project-docs-api", "docs-api", "Docs API", "/demo/docs-api"),
+            ("project-docs-search-api", "docs-search-api", "Docs Search API", "/demo/docs-search-api"),
         )
         conn.execute(
             """
             INSERT INTO topics
             (id, project_id, provider, title, state, summary, why_now, risk_class, caller_count, claude_authored, rank)
-            VALUES (?, 'project-docs-api', 'claude_code', ?, 'check_recommended', ?, ?, 'persistence', 5, 1, 1)
+            VALUES (?, 'project-docs-search-api', 'claude_code', ?, 'check_recommended', ?, ?, 'persistence', 5, 1, 1)
             """,
             (
                 "tenant-cache-isolation",
@@ -83,13 +83,13 @@ def test_initialize_backfills_seeded_receipt_grounding(tmp_path):
         initialize_schema(conn)
         conn.execute(
             "INSERT INTO projects (id, slug, name, repo_path) VALUES (?, ?, ?, ?)",
-            ("project-docs-api", "docs-api", "Docs API", "/demo/docs-api"),
+            ("project-docs-search-api", "docs-search-api", "Docs Search API", "/demo/docs-search-api"),
         )
         conn.execute(
             """
             INSERT INTO topics
             (id, project_id, provider, title, state, summary, why_now, risk_class, caller_count, claude_authored, rank)
-            VALUES (?, 'project-docs-api', 'claude_code', ?, 'check_recommended', ?, ?, 'persistence', 5, 1, 1)
+            VALUES (?, 'project-docs-search-api', 'claude_code', ?, 'check_recommended', ?, ?, 'persistence', 5, 1, 1)
             """,
             (
                 "tenant-cache-isolation",
