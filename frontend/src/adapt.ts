@@ -2,7 +2,7 @@
 // the source of truth (docs/planning/backend-topic-initialization-note.md); the
 // frontend never invents topics, providers, or risk semantics — it relabels.
 
-import { Topic, TopicDetail } from './api'
+import { Topic } from './api'
 
 // Lifecycle state → ownership-status badge color (theme.badge kind) + faintness.
 // The human-readable label itself comes from the backend's derived
@@ -21,6 +21,13 @@ const STATE_BADGE_KIND: Record<string, { kind: string; faint?: boolean }> = {
 const ACTIONABLE = new Set(['check_recommended', 'code_changed_since_practice', 'in_progress'])
 
 export const isActionable = (state: string): boolean => ACTIONABLE.has(state)
+
+// Ownership-status badge color (theme.badge kind) + faintness for a lifecycle
+// state. The label itself is the backend's derived ownership_status.
+export function statusBadge(state: string): { kind: string; faint: boolean } {
+  const sb = STATE_BADGE_KIND[state] || { kind: 'recommended' }
+  return { kind: sb.kind, faint: !!sb.faint }
+}
 
 // Risk class is shown verbatim (underscores → hyphens). We do not translate the
 // backend's risk taxonomy into friendlier-but-invented labels.
@@ -64,53 +71,17 @@ export function toCards(topics: Topic[]): Card[] {
   })
 }
 
-const RECEIPT_PROVIDER: Record<string, { label: string; chip: string }> = {
-  claude_code: { label: '✳ Claude', chip: 'claude' },
-  codex: { label: '⬡ Codex', chip: 'codex' },
+// Human label for a Development-trace's Provider tag. The expanded view is
+// provider-neutral in layout (#24); the label only states the actual Provider that
+// authored the trace. Falls back to a title-cased form, never to a fake "Claude".
+const TRACE_PROVIDER: Record<string, string> = {
+  claude_code: 'Claude Code',
+  codex: 'Codex',
 }
 
-export interface Receipt {
-  code: any
-  receipt: any
-  trail: any
-  // True only when a real conversation receipt grounds this Topic. Extracted
-  // topics carry code + trail evidence but no session link, so the UI must not
-  // imply an authoring receipt it doesn't have.
-  hasReceipt: boolean
-  provider: string
-  providerLabel: string
-  providerChipKind: string
-  toolSequence: string[]
-  sourcePath: string | null
-  sessionId: string | null
-  linkConfidence: string | null
-  codePath: string
-  invariant: string
-}
-
-// Pull the authoring-receipt view out of a topic detail's evidence list.
-export function deriveReceipt(detail: TopicDetail): Receipt {
-  const ev = detail.evidence || []
-  const code = ev.find((e) => e.kind === 'code') || null
-  const receipt = ev.find((e) => /_receipt$/.test(e.kind)) || null
-  const trail = ev.find((e) => e.kind === 'missing_reasoning') || null
-  const provider = receipt?.provider || detail.provider || 'claude_code'
-  const pm = RECEIPT_PROVIDER[provider] || { label: provider, chip: 'plain' }
-  return {
-    code,
-    receipt,
-    trail,
-    hasReceipt: !!receipt,
-    provider,
-    providerLabel: pm.label,
-    providerChipKind: pm.chip,
-    toolSequence: receipt?.tool_sequence || [],
-    sourcePath: receipt?.source_path || null,
-    sessionId: receipt?.session_id || null,
-    linkConfidence: receipt?.link_confidence || null,
-    codePath: detail.current_revision?.code_path || code?.title || '',
-    invariant: detail.current_revision?.invariant || '',
-  }
+export function providerLabel(provider?: string | null): string {
+  if (!provider) return 'Session'
+  return TRACE_PROVIDER[provider] || provider.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 // Derive the read-only companion test path from a check's editable target.
