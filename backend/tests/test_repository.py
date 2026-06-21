@@ -11,7 +11,8 @@ def test_repository_seeds_demo_project_and_topics(tmp_path):
     assert [project["slug"] for project in projects] == ["docs-search-api"]
 
     topics = repo.list_topics("docs-search-api")
-    assert len(topics) == 4
+    # The demo worklist is the captured live Topic Analyst run (3 verified topics).
+    assert len(topics) == 3
     assert topics[0]["state"] == "check_recommended"
     assert "tenant" in topics[0]["title"].lower()
 
@@ -397,7 +398,7 @@ def test_analysis_unavailable_falls_back_to_last_verified_worklist(git_repo, tmp
     class _UnavailableAnalyst:
         model_id = "claude-code"
 
-        def discover(self, repo_path, index):
+        def discover(self, repo_path, index, progress=None):
             return DiscoveryResult([], self.model_id)  # nothing verifiable this run
 
     repo_path, _sha = git_repo

@@ -70,6 +70,7 @@ Use exactly one real Git project with 3–5 verified analyst-generated topics. O
 **Topic analysis — Claude Code discovers; deterministic code verifies.**
 - Deterministically ingest and index commits, code anchors, tests, docs, comments, and normalized Provider traces. Optimize this layer for lossless capture and recall, not semantic judgment.
 - Run a repository-level **Claude Code Topic Analyst** to search that material with scoped read-only `Read`, `Grep`, and `Glob` access. Deny mutation, arbitrary shell, web, and unrelated MCP tools.
+- Pin analyst runs to **Opus with high effort** (`--model opus --effort high`). Consume `stream-json` and surface safe phase/tool activity without exposing model reasoning or source contents. Do not impose a short wall-clock deadline; use a 10-minute no-output watchdog so active investigations may run as long as needed.
 - Require structured ordered Topic proposals containing title, maintenance obligation/invariant, categorical impact plus consequence, priority rationale, Code-anchor locators, and Provider-labeled Development-trace locators with link confidence. Derive ownership status and the evidence-count summary after verification.
 - Resolve every locator against the indexed source before persistence; reject unsupported/stale citations and hash accepted excerpts. Claude finds and interprets Evidence; Ledger proves the cited Evidence exists.
 - Do not reuse the Coach's all-tools-denied policy here. The analyst's job requires repository and trace investigation; the Coach's job requires withholding the solution.

@@ -4,7 +4,7 @@ import json
 import re
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .analyst import (
     ANALYSIS_SCHEMA_VERSION,
@@ -242,6 +242,7 @@ class LedgerRepository:
         repo_path: str | Path,
         *,
         analyst: Analyst | None = None,
+        progress: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         """Derive the worklist via agentic discovery, persisting grounded topics.
 
@@ -258,7 +259,7 @@ class LedgerRepository:
         head_sha = resolve_head_sha(repo_root)
 
         index = AnalystIndex.from_repo(repo_root, traces=self._trace_locators(project))
-        discovery = analyst.discover(repo_root, index)
+        discovery = analyst.discover(repo_root, index, progress=progress)
         verification = verify_proposals(
             discovery.proposals, repo_root=repo_root, index=index, available_traces=index.traces
         )
@@ -292,6 +293,7 @@ class LedgerRepository:
             "project": project,
             "head_sha": head_sha,
             "analysis_source": analysis_source,
+            "fallback_reason": discovery.fallback_reason,
             "considered": len(index.candidates),
             "surfaced": len(persisted),
             "rejected": len(verification.rejected),
@@ -923,166 +925,95 @@ class LedgerRepository:
         )
 
     def _seed(self, conn: Any) -> None:
+        """Seed the demo worklist from a captured live Topic Analyst run.
+
+        The topics, invariants, impact, and code-anchor evidence in
+        ``fixtures/demo_seed.json`` were produced by the agentic analyst
+        (claude-opus-4-8) over docs-search-api and captured verbatim -- not
+        hand-authored. Seeding replays that real discovery deterministically.
+        The tenant-isolation topic keeps the canonical ``tenant-cache-isolation``
+        id so the Debug-to-Own check stays attached to it.
+        """
+        seed = json.loads(
+            (Path(__file__).parent / "fixtures" / "demo_seed.json").read_text()
+        )
         conn.execute(
             "INSERT INTO projects (id, slug, name, repo_path) VALUES (?, ?, ?, ?)",
-            ("project-docs-search-api", "docs-search-api", "Docs Search API", str(Path.home() / "Projects" / "docs-search-api")),
-        )
-        topics = [
             (
-                "tenant-cache-isolation",
-                "Tenant isolation in retrieval cache",
-                "check_recommended",
-                "Cached retrieval results must never cross tenant boundaries.",
-                "Claude touched the retrieval path, the decision has no ADR, and it protects tenant isolation.",
-                "persistence",
-                5,
-                1,
-                1,
+                "project-docs-search-api",
+                "docs-search-api",
+                "Docs Search API",
+                str(Path.home() / "Projects" / "docs-search-api"),
             ),
-            (
-                "rerank-threshold",
-                "Rerank cutoff threshold",
-                "check_recommended",
-                "Low-confidence documents are trimmed before synthesis.",
-                "High blast radius and no comment explains the cutoff.",
-                "ranking",
-                3,
-                1,
-                2,
-            ),
-            (
-                "source-window",
-                "Source window ordering",
-                "practiced",
-                "The answer builder preserves source order before citation packing.",
-                "Previously practiced, but still important to the answer path.",
-                "retrieval",
-                4,
-                0,
-                3,
-            ),
-            (
-                "retry-budget",
-                "Provider retry budget",
-                "code_changed_since_practice",
-                "The model client limits retries so failures stay observable.",
-                "Code changed since the last practice event.",
-                "external_api",
-                2,
-                0,
-                4,
-            ),
-        ]
-        conn.executemany(
-            """
-            INSERT INTO topics
-            (id, project_id, provider, title, state, summary, why_now, risk_class, caller_count, claude_authored, rank)
-            VALUES (?, 'project-docs-search-api', 'claude_code', ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            topics,
         )
         conn.execute(
-            """
-            INSERT INTO commits (sha, project_id)
-            VALUES ('demo-seed', 'project-docs-search-api')
-            """
+            "INSERT INTO commits (sha, project_id) VALUES (?, 'project-docs-search-api')",
+            (seed["commit_sha"],),
         )
         conn.execute(
             """
             INSERT INTO sessions (id, project_id, provider, source_path)
-            VALUES (?, ?, ?, ?)
+            VALUES (?, 'project-docs-search-api', 'claude_code', ?)
             """,
-            (
-                "claude-demo-session",
-                "project-docs-search-api",
-                "claude_code",
-                "~/.claude/projects/demo.jsonl",
-            ),
+            (seed["session"]["id"], seed["session"]["source_path"]),
         )
-        conn.execute(
-            """
-            INSERT INTO topic_revisions
-            (id, topic_id, revision, commit_sha, code_path, invariant, risk_class, fingerprint)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "tenant-cache-isolation-rev-1",
-                "tenant-cache-isolation",
-                1,
-                "demo-seed",
-                "retrieval/rerank.py",
-                "Candidate documents must be filtered by tenant_id before ranking.",
-                "persistence",
-                "demo-tenant-cache-isolation-v1",
-            ),
-        )
-        conn.executemany(
-            """
-            INSERT INTO evidence
-            (topic_id, provider, session_id, source_path, tool_sequence_json, link_confidence, kind, title, body)
-            VALUES (?, 'claude_code', ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
+        for topic in seed["topics"]:
+            conn.execute(
+                """
+                INSERT INTO topics
+                (id, project_id, provider, title, state, summary, why_now, risk_class,
+                 caller_count, claude_authored, rank, impact_level, impact_consequence,
+                 priority_rationale)
+                VALUES (?, 'project-docs-search-api', 'claude_code', ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?)
+                """,
                 (
-                    "tenant-cache-isolation",
-                    None,
-                    None,
-                    "[]",
-                    "hand_verified",
-                    "code",
-                    "retrieval/rerank.py",
-                    "visible_documents_for_tenant filters candidate documents by tenant_id before ranking.",
+                    topic["id"], topic["title"], topic["state"], topic["summary"],
+                    topic["why_now"], topic["risk_class"], topic["caller_count"],
+                    topic["claude_authored"], topic["rank"], topic["impact_level"],
+                    topic["impact_consequence"], topic["priority_rationale"],
                 ),
+            )
+            rev = topic["revision"]
+            conn.execute(
+                """
+                INSERT INTO topic_revisions
+                (id, topic_id, revision, commit_sha, code_path, invariant, risk_class, fingerprint)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
-                    "tenant-cache-isolation",
-                    "claude-demo-session",
-                    "~/.claude/projects/demo.jsonl",
-                    json.dumps(
-                        [
-                            "Read retrieval/rerank.py",
-                            "Edit retrieval/rerank.py",
-                            "Bash python -m pytest",
-                        ]
+                    rev["id"], topic["id"], rev["revision"], rev["commit_sha"],
+                    rev["code_path"], rev["invariant"], rev["risk_class"], rev["fingerprint"],
+                ),
+            )
+            for ev in topic["evidence"]:
+                evidence_id = conn.execute(
+                    """
+                    INSERT INTO evidence
+                    (topic_id, provider, session_id, source_path, tool_sequence_json,
+                     link_confidence, kind, title, body, excerpt_sha, relevance)
+                    VALUES (?, 'claude_code', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        topic["id"], ev["session_id"], ev["source_path"],
+                        json.dumps(ev.get("tool_sequence") or []), ev["link_confidence"],
+                        ev["kind"], ev["title"], ev["body"], ev["excerpt_sha"], ev["relevance"],
                     ),
-                    "hand_verified",
-                    "claude_receipt",
-                    "Claude Code session",
-                    "Read retrieval/rerank.py -> Edit retrieval/rerank.py -> Bash python -m pytest.",
-                ),
-                (
-                    "tenant-cache-isolation",
-                    None,
-                    None,
-                    "[]",
-                    "hand_verified",
-                    "missing_reasoning",
-                    "Trail scan",
-                    "Searched ADRs, CONTEXT, README, comments, and commit messages; no tenant cache rationale found.",
-                ),
-            ],
-        )
-        evidence_rows = conn.execute(
-            "SELECT id, kind FROM evidence WHERE topic_id = ?",
-            ("tenant-cache-isolation",),
-        ).fetchall()
-        conn.executemany(
-            """
-            INSERT INTO revision_evidence (topic_revision_id, evidence_id, role, confidence)
-            VALUES ('tenant-cache-isolation-rev-1', ?, ?, 'hand_verified')
-            """,
-            [(row["id"], row["kind"]) for row in evidence_rows],
-        )
-        conn.execute(
-            """
-            INSERT INTO topic_events (topic_id, topic_revision_id, event_type, body)
-            VALUES (?, ?, 'created', ?)
-            """,
-            (
-                "tenant-cache-isolation",
-                "tenant-cache-isolation-rev-1",
-                "Seeded demo topic revision.",
-            ),
-        )
+                ).lastrowid
+                conn.execute(
+                    """
+                    INSERT INTO revision_evidence (topic_revision_id, evidence_id, role, confidence)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (rev["id"], evidence_id, ev["kind"], ev["link_confidence"]),
+                )
+            conn.execute(
+                """
+                INSERT INTO topic_events (topic_id, topic_revision_id, event_type, body)
+                VALUES (?, ?, 'created', 'Seeded from the demo Topic Analyst run.')
+                """,
+                (topic["id"], rev["id"]),
+            )
         conn.commit()
 
     def _ensure_seeded_revisions(self, conn: Any) -> None:

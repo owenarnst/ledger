@@ -5,6 +5,7 @@ analyst rides ``claude -p`` with the *inverse* of the Coach/Labeler tool boundar
 (read-only investigation allowed, mutation/shell/web denied).
 """
 
+import io
 import json
 
 import pytest
@@ -55,6 +56,10 @@ def test_deterministic_analyst_is_the_recall_gate_not_the_repo_layer():
 def test_claude_analyst_allows_scoped_readonly_tools_and_denies_the_rest():
     cmd = ClaudeAnalyst().build_command()
     assert "-p" in cmd and "--output-format" in cmd
+    assert cmd[cmd.index("--model") + 1] == "opus"
+    assert cmd[cmd.index("--effort") + 1] == "high"
+    assert cmd[cmd.index("--output-format") + 1] == "stream-json"
+    assert "--verbose" in cmd
 
     allowed = cmd[cmd.index("--allowedTools") + 1]
     assert set(allowed.split(",")) == {"Read", "Grep", "Glob"}
@@ -77,6 +82,83 @@ def test_claude_analyst_falls_back_to_deterministic_when_cli_absent():
     deterministic = DeterministicAnalyst().discover(HERO_REPO, index).proposals
     assert [p.title for p in discovery.proposals] == [p.title for p in deterministic]
     assert discovery.proposals
+    assert "could not start" in (discovery.fallback_reason or "").lower()
+
+
+def test_claude_analyst_streams_safe_progress_and_parses_final_result(monkeypatch):
+    proposal = {
+        "title": "Tenant isolation in retrieval",
+        "maintenance_obligation": "Scope candidates to the requesting tenant.",
+        "invariant": "Filter by tenant before ranking.",
+        "impact_level": "high",
+        "impact_consequence": "Cross-tenant document leak.",
+        "priority_rationale": "Highest blast radius.",
+        "code_anchors": [
+            {"path": "retrieval/rerank.py", "lineno": 10, "end_lineno": 12, "relevance": "filter"}
+        ],
+        "development_traces": [],
+    }
+    events = [
+        {"type": "system", "subtype": "init", "model": "claude-opus-test"},
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "Read",
+                        "input": {"file_path": str(HERO_REPO / "retrieval/rerank.py")},
+                    },
+                    {"type": "text", "text": "private model reasoning must not be emitted"},
+                ]
+            },
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "num_turns": 3,
+            "result": json.dumps([proposal]),
+        },
+    ]
+
+    class FakeStdin:
+        def __init__(self):
+            self.value = ""
+
+        def write(self, value):
+            self.value += value
+
+        def close(self):
+            pass
+
+    class FakePopen:
+        def __init__(self):
+            self.stdin = FakeStdin()
+            self.stdout = io.StringIO("".join(json.dumps(event) + "\n" for event in events))
+            self.stderr = io.StringIO("")
+            self.returncode = 0
+
+        def wait(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+    fake = FakePopen()
+    monkeypatch.setattr("backend.analyst.subprocess.Popen", lambda *args, **kwargs: fake)
+    progress: list[str] = []
+
+    discovery = ClaudeAnalyst().discover(HERO_REPO, _index(), progress=progress.append)
+
+    assert discovery.model_id == "claude-opus-test"
+    assert discovery.proposals[0].title == "Tenant isolation in retrieval"
+    assert "Reading retrieval/rerank.py" in progress
+    assert all("private model reasoning" not in message for message in progress)
+    assert "Candidate decision anchors" in fake.stdin.value
 
 
 def test_claude_analyst_prompt_seeds_the_recall_index():

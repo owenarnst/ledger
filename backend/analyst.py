@@ -25,11 +25,14 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import subprocess
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol, TextIO
 
 from .extraction import Candidate, blast_score, extract_candidates
 
@@ -43,6 +46,8 @@ VALID_LINK_CONFIDENCE = ("exact", "heuristic", "hand_verified")
 
 # Prompt/contract version recorded with every analysis run for auditability.
 ANALYSIS_SCHEMA_VERSION = "topic-proposal-v1"
+
+ProgressCallback = Callable[[str], None]
 
 
 @dataclass(frozen=True)
@@ -91,6 +96,7 @@ class DiscoveryResult:
     proposals: list[TopicProposal]
     model_id: str
     raw_output: str = ""  # the analyst's raw stdout, recorded for audit (empty for deterministic)
+    fallback_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -143,7 +149,12 @@ class AnalystIndex:
 class Analyst(Protocol):
     model_id: str
 
-    def discover(self, repo_path: str | Path, index: AnalystIndex) -> DiscoveryResult: ...
+    def discover(
+        self,
+        repo_path: str | Path,
+        index: AnalystIndex,
+        progress: ProgressCallback | None = None,
+    ) -> DiscoveryResult: ...
 
 
 # --------------------------------------------------------------------------- #
@@ -234,7 +245,12 @@ class DeterministicAnalyst:
 
     model_id: str = "deterministic"
 
-    def discover(self, repo_path: str | Path, index: AnalystIndex) -> DiscoveryResult:
+    def discover(
+        self,
+        repo_path: str | Path,
+        index: AnalystIndex,
+        progress: ProgressCallback | None = None,
+    ) -> DiscoveryResult:
         surfaced = sorted(
             (c for c in index.candidates if c.surfaced), key=lambda c: -blast_score(c)
         )
@@ -314,20 +330,28 @@ class ClaudeAnalyst:
     """Agentic analyst: rides ``claude -p`` with scoped read-only tools.
 
     Falls back to the deterministic analyst on any failure so discovery never
-    breaks the extraction pipeline.
+    breaks the extraction pipeline. There is no short wall-clock deadline:
+    stream activity resets an inactivity watchdog, allowing long investigations
+    to finish while still recovering from a genuinely stalled CLI process.
     """
 
     binary: str = "claude"
-    timeout_seconds: int = 120
-    model_id: str = "claude-code"
+    inactivity_timeout_seconds: float = 600
+    model_id: str = "opus"
+    effort: str = "high"
     fallback: DeterministicAnalyst = field(default_factory=DeterministicAnalyst)
 
     def build_command(self) -> list[str]:
         return [
             self.binary,
             "-p",
+            "--model",
+            self.model_id,
+            "--effort",
+            self.effort,
             "--output-format",
-            "json",
+            "stream-json",
+            "--verbose",
             "--append-system-prompt",
             ANALYST_POLICY,
             "--allowedTools",
@@ -348,29 +372,215 @@ class ClaudeAnalyst:
             ]
         )
 
-    def discover(self, repo_path: str | Path, index: AnalystIndex) -> DiscoveryResult:
+    def discover(
+        self,
+        repo_path: str | Path,
+        index: AnalystIndex,
+        progress: ProgressCallback | None = None,
+    ) -> DiscoveryResult:
         repo_path = Path(repo_path)
+        _emit(progress, f"Starting Claude Topic Analyst ({self.model_id}, {self.effort} effort)")
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 self.build_command(),
-                input=self.build_prompt(repo_path, index),
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=self.timeout_seconds,
+                stdin=subprocess.PIPE,
                 cwd=str(repo_path),  # scope Read/Grep/Glob to the enrolled repo
-                check=False,
+                bufsize=1,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-            return self.fallback.discover(repo_path, index)
-        if proc.returncode != 0:
-            return self.fallback.discover(repo_path, index)
-        proposals = parse_proposals(proc.stdout)
+        except (FileNotFoundError, OSError) as exc:
+            return self._fallback(repo_path, index, f"Claude CLI could not start: {exc}", progress)
+
+        try:
+            assert proc.stdin is not None
+            proc.stdin.write(self.build_prompt(repo_path, index))
+            proc.stdin.close()
+            final_event, effective_model, stderr = self._consume_stream(
+                proc, repo_path=repo_path, progress=progress
+            )
+        except KeyboardInterrupt:
+            proc.terminate()
+            proc.wait()
+            raise
+        except (BrokenPipeError, OSError) as exc:
+            proc.kill()
+            proc.wait()
+            return self._fallback(
+                repo_path, index, f"Claude stream failed: {exc}", progress
+            )
+
+        if final_event is None:
+            reason = _last_nonempty_line(stderr) or "Claude returned no final result event"
+            return self._fallback(repo_path, index, reason, progress)
+        if proc.returncode != 0 or final_event.get("is_error"):
+            reason = str(final_event.get("result") or _last_nonempty_line(stderr) or "Claude failed")
+            return self._fallback(repo_path, index, reason, progress)
+
+        final_output = json.dumps(final_event)
+        proposals = parse_proposals(final_output)
         if not proposals:
-            # Honest fallback: report the deterministic model, never relabel
-            # heuristic candidates as agent analysis (ADR-0002).
-            return self.fallback.discover(repo_path, index)
-        return DiscoveryResult(proposals, self.model_id, raw_output=proc.stdout)
+            return self._fallback(
+                repo_path, index, "Claude returned no valid Topic proposals", progress
+            )
+        _emit(progress, f"Claude proposed {len(proposals)} grounded Topic(s)")
+        return DiscoveryResult(proposals, effective_model, raw_output=final_output)
+
+    def _consume_stream(
+        self,
+        proc: subprocess.Popen[str],
+        *,
+        repo_path: Path,
+        progress: ProgressCallback | None,
+    ) -> tuple[dict[str, object] | None, str, str]:
+        """Consume Claude stream-json without exposing reasoning or source contents."""
+        assert proc.stdout is not None and proc.stderr is not None
+        messages: queue.Queue[tuple[str, str | None]] = queue.Queue()
+        for source, stream in (("stdout", proc.stdout), ("stderr", proc.stderr)):
+            threading.Thread(
+                target=_read_lines,
+                args=(source, stream, messages),
+                daemon=True,
+            ).start()
+
+        open_streams = {"stdout", "stderr"}
+        final_event: dict[str, object] | None = None
+        effective_model = self.model_id
+        stderr_lines: list[str] = []
+        last_activity = time.monotonic()
+        emitted: set[str] = set()
+
+        while open_streams:
+            remaining = self.inactivity_timeout_seconds - (time.monotonic() - last_activity)
+            if remaining <= 0:
+                proc.kill()
+                proc.wait()
+                message = (
+                    "Claude produced no output for "
+                    f"{self.inactivity_timeout_seconds:g} seconds"
+                )
+                _emit(progress, message)
+                return None, effective_model, message
+            try:
+                source, line = messages.get(timeout=remaining)
+            except queue.Empty:
+                proc.kill()
+                proc.wait()
+                message = (
+                    "Claude produced no output for "
+                    f"{self.inactivity_timeout_seconds:g} seconds"
+                )
+                _emit(progress, message)
+                return None, effective_model, message
+
+            if line is None:
+                open_streams.discard(source)
+                continue
+            last_activity = time.monotonic()
+            if source == "stderr":
+                stderr_lines.append(line.rstrip())
+                continue
+
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") == "system" and event.get("model"):
+                effective_model = str(event["model"])
+            for message in _progress_messages(event, repo_path):
+                if message not in emitted:
+                    emitted.add(message)
+                    _emit(progress, message)
+            if event.get("type") == "result":
+                final_event = event
+
+        proc.wait()
+        return final_event, effective_model, "\n".join(stderr_lines)
+
+    def _fallback(
+        self,
+        repo_path: Path,
+        index: AnalystIndex,
+        reason: str,
+        progress: ProgressCallback | None,
+    ) -> DiscoveryResult:
+        # Honest fallback: report the deterministic model, never relabel
+        # heuristic candidates as agent analysis (ADR-0002).
+        clean_reason = " ".join(reason.split()) or "unknown Claude failure"
+        _emit(progress, f"Falling back to deterministic analysis: {clean_reason}")
+        result = self.fallback.discover(repo_path, index, progress=progress)
+        return DiscoveryResult(
+            result.proposals,
+            result.model_id,
+            raw_output=json.dumps({"fallback_reason": clean_reason}),
+            fallback_reason=clean_reason,
+        )
+
+
+def _read_lines(
+    source: str,
+    stream: TextIO,
+    messages: queue.Queue[tuple[str, str | None]],
+) -> None:
+    try:
+        for line in stream:
+            messages.put((source, line))
+    finally:
+        messages.put((source, None))
+
+
+def _emit(progress: ProgressCallback | None, message: str) -> None:
+    if progress is not None:
+        progress(message)
+
+
+def _last_nonempty_line(value: str) -> str:
+    return next((line.strip() for line in reversed(value.splitlines()) if line.strip()), "")
+
+
+def _progress_messages(event: dict[str, object], repo_path: Path) -> list[str]:
+    """Return safe activity summaries; never emit model reasoning or file contents."""
+    if event.get("type") == "system" and event.get("subtype") == "init":
+        model = event.get("model")
+        return [f"Claude session initialized ({model})" if model else "Claude session initialized"]
+    if event.get("type") == "result":
+        turns = event.get("num_turns")
+        return [f"Claude analysis finished ({turns} turn(s))" if turns else "Claude analysis finished"]
+    if event.get("type") != "assistant":
+        return []
+    message = event.get("message")
+    if not isinstance(message, dict):
+        return []
+    content = message.get("content")
+    if not isinstance(content, list):
+        return []
+    summaries: list[str] = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        tool = str(block.get("name") or "")
+        inputs = block.get("input")
+        inputs = inputs if isinstance(inputs, dict) else {}
+        if tool == "Read":
+            summaries.append(f"Reading {_display_path(inputs.get('file_path'), repo_path)}")
+        elif tool == "Grep":
+            summaries.append(f"Searching {_display_path(inputs.get('path'), repo_path)} with Grep")
+        elif tool == "Glob":
+            summaries.append(f"Scanning {_display_path(inputs.get('path'), repo_path)} with Glob")
+    return summaries
+
+
+def _display_path(value: object, repo_path: Path) -> str:
+    if not value:
+        return "repository"
+    path = Path(str(value))
+    try:
+        return str(path.resolve().relative_to(repo_path.resolve()))
+    except ValueError:
+        return path.name or "repository"
 
 
 def parse_proposals(stdout: str) -> list[TopicProposal]:

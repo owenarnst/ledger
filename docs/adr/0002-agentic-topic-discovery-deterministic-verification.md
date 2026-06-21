@@ -14,6 +14,7 @@ Split **discovery** from **verification**:
 
 - Provider adapters and repository scanners deterministically ingest and index commits, code, tests, documentation, comments, and normalized traces. Candidate-anchor detection is a recall-oriented starting point, not the worklist gate.
 - A Claude Code **Topic Analyst** uses scoped read-only `Read`, `Grep`, and `Glob` tools to find and interpret supporting Evidence, construct durable Topics, and return the ordered worklist.
+- Analyst execution is pinned to Opus with high effort and consumed as `stream-json`. Ledger may expose sanitized phase and tool-use summaries, never private reasoning or source contents. Active output resets a 10-minute inactivity watchdog; there is no short wall-clock deadline on repository investigation.
 - Each proposed Topic must contain source locators and link confidence for its anchors and supporting context, plus its maintenance obligation, invariant, risk, and priority explanation.
 - Deterministic code resolves cited locators against the indexed sources, rejects unsupported or stale citations, hashes accepted excerpts, and persists immutable Evidence and Topic revisions.
 - Checkability and pass/fail remain empirical: baseline-green → mutant-red and test exit codes are not model judgments.

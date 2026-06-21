@@ -81,13 +81,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "extract":
         repo = LedgerRepository(db_path=Path(args.db), sandbox_root=Path(args.sandbox_root))
         repo.initialize()
-        result = repo.extract_or_refresh_topics(args.repo)
+        result = repo.extract_or_refresh_topics(
+            args.repo,
+            progress=lambda message: print(f"[analyst] {message}", file=sys.stderr, flush=True),
+        )
         print(
             f"Discovered {result['surfaced']} verified worklist topic(s) for "
             f"'{result['project']['slug']}' via the {result['analysis_source']} analyst "
             f"(from {result['considered']} candidate anchor(s); "
             f"{result['rejected']} citation(s) rejected)."
         )
+        if result.get("fallback_reason"):
+            print(f"Claude fallback reason: {result['fallback_reason']}", file=sys.stderr)
         return 0
     if args.command == "nudge":
         repo = LedgerRepository(db_path=Path(args.db), sandbox_root=Path(args.sandbox_root))
