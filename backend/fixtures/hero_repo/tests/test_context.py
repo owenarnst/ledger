@@ -31,3 +31,15 @@ def test_excerpt_for_truncates_to_max_excerpt():
     doc = _doc("a", "x" * (MAX_EXCERPT_CHARACTERS + 50))
 
     assert len(excerpt_for(doc)) == MAX_EXCERPT_CHARACTERS
+
+
+def test_pack_context_caps_each_documents_contribution():
+    # No single document may dominate the window: a document far larger than the
+    # per-excerpt cap must still count for at most MAX_EXCERPT_CHARACTERS, leaving
+    # room for the next document instead of consuming the whole budget itself.
+    big = _doc("big", "x" * 1000)
+    small = _doc("small", "y" * 50)
+
+    packed = pack_context([big, small], char_budget=400, max_excerpt=MAX_EXCERPT_CHARACTERS)
+
+    assert [doc.id for doc in packed] == ["big", "small"]

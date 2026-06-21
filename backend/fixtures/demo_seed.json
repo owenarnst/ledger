@@ -1,5 +1,5 @@
 {
-  "_comment": "Demo worklist seeded from a live Claude Topic Analyst run (claude-opus-4-8) on docs-search-api @8d57340. Regenerate by re-running extraction; do not hand-edit.",
+  "_comment": "Demo worklist seeded from a live Claude Topic Analyst run (claude-opus-4-8) on docs-search-api @8d57340. exercise_plans are live ClaudeAnalyst-generated easy + medium plans for all three topics, captured verbatim so the Debug-to-Own MCQs load instantly and deterministically and match each topic-specific sandbox (hard is sandbox-only and needs no plan). Regenerate by re-running extraction / a live check; do not hand-edit.",
   "session": {
     "id": "claude-demo-session",
     "source_path": "~/.claude/projects/demo.jsonl"
@@ -227,6 +227,405 @@
           "tool_sequence": []
         }
       ]
+    }
+  ],
+  "exercise_plans": [
+    {
+      "topic_id": "tenant-cache-isolation",
+      "topic_revision_id": "tenant-cache-isolation-rev-1",
+      "difficulty": "easy",
+      "provider": "claude",
+      "plan": {
+        "template_id": "tenant-isolation-pre-rerank-filter",
+        "difficulty": "easy",
+        "steps": [
+          {
+            "type": "multiple_choice",
+            "question_id": "q1"
+          },
+          {
+            "type": "multiple_choice",
+            "question_id": "q2"
+          },
+          {
+            "type": "multiple_choice",
+            "question_id": "q3"
+          },
+          {
+            "type": "multiple_choice",
+            "question_id": "q4"
+          }
+        ],
+        "questions": [
+          {
+            "id": "q1",
+            "kind": "concept",
+            "prompt": "Why must candidates be filtered by tenant in retrieval/rerank.py?",
+            "choices": [
+              "The store intentionally returns candidates across all tenants.",
+              "The reranker automatically changes every document's tenant_id.",
+              "SearchResponse permits documents from any tenant."
+            ],
+            "correct_index": 0,
+            "rationale": "The candidate store is tenant-blind by design, so the pipeline must enforce tenant isolation."
+          },
+          {
+            "id": "q2",
+            "kind": "concept",
+            "prompt": "Where must visible_documents_for_tenant run?",
+            "choices": [
+              "Immediately after store.candidates() and before rerank.",
+              "After rerank and after constructing SearchResponse.",
+              "Before store.candidates() is called."
+            ],
+            "correct_index": 0,
+            "rationale": "Filtering immediately after candidate retrieval prevents tenant-blind candidates from reaching later pipeline stages."
+          },
+          {
+            "id": "q3",
+            "kind": "debugging",
+            "prompt": "Which implementation preserves the tenant-isolation invariant?",
+            "choices": [
+              "candidates = store.candidates(query); visible = visible_documents_for_tenant(candidates, request.tenant_id); ranked = rerank(visible)",
+              "candidates = store.candidates(query); ranked = rerank(candidates); visible = ranked",
+              "candidates = store.candidates(query); visible = [doc for doc in candidates if doc.id == request.tenant_id]; ranked = rerank(visible)"
+            ],
+            "correct_index": 0,
+            "rationale": "The correct pipeline filters store candidates using the requesting tenant before reranking."
+          },
+          {
+            "id": "q4",
+            "kind": "debugging",
+            "prompt": "Which predicate correctly implements visible_documents_for_tenant?",
+            "choices": [
+              "Keep each doc when doc.tenant_id == request.tenant_id.",
+              "Keep each doc when doc.tenant_id != request.tenant_id.",
+              "Keep every doc regardless of doc.tenant_id."
+            ],
+            "correct_index": 0,
+            "rationale": "Every document that can enter SearchResponse must have the same tenant_id as the request."
+          }
+        ]
+      }
+    },
+    {
+      "topic_id": "tenant-cache-isolation",
+      "topic_revision_id": "tenant-cache-isolation-rev-1",
+      "difficulty": "medium",
+      "provider": "claude",
+      "plan": {
+        "difficulty": "medium",
+        "questions": [
+          {
+            "choices": [
+              "Immediately after store.candidates() and before rerank",
+              "After rerank but before constructing SearchResponse",
+              "After constructing SearchResponse"
+            ],
+            "correct_index": 0,
+            "id": "filter-placement",
+            "kind": "concept",
+            "prompt": "Where must retrieval/rerank.py apply visible_documents_for_tenant so tenant-blind store candidates cannot escape or influence reranking?",
+            "rationale": "Filtering immediately after candidate retrieval establishes tenant isolation before reranking or response construction can expose or process another tenant's documents."
+          },
+          {
+            "choices": [
+              "Return only documents where doc.tenant_id == request.tenant_id",
+              "Return all candidates and rely on rerank to prioritize the requesting tenant",
+              "Return documents where doc.tenant_id is absent or differs from request.tenant_id"
+            ],
+            "correct_index": 0,
+            "id": "filter-predicate",
+            "kind": "debugging",
+            "prompt": "Which implementation preserves the required visibility rule?",
+            "rationale": "The visibility filter must retain exactly the documents owned by the requesting tenant; reranking is not an authorization boundary."
+          }
+        ],
+        "steps": [
+          {
+            "question_id": "filter-placement",
+            "type": "multiple_choice"
+          },
+          {
+            "question_id": "filter-predicate",
+            "type": "multiple_choice"
+          },
+          {
+            "type": "sandbox"
+          }
+        ],
+        "template_id": "ledger-tenant-isolation-pre-rerank-filter"
+      }
+    },
+    {
+      "topic_id": "docs-search-api-rerank-rerank",
+      "topic_revision_id": "docs-search-api-rerank-rerank-rev-1",
+      "difficulty": "easy",
+      "provider": "claude",
+      "plan": {
+        "template_id": "rerank-confidence-cutoff-easy",
+        "difficulty": "easy",
+        "steps": [
+          {
+            "type": "multiple_choice",
+            "question_id": "q-single-source"
+          },
+          {
+            "type": "multiple_choice",
+            "question_id": "q-ordering"
+          },
+          {
+            "type": "multiple_choice",
+            "question_id": "q-invariant"
+          },
+          {
+            "type": "multiple_choice",
+            "question_id": "q-fix-literal"
+          },
+          {
+            "type": "multiple_choice",
+            "question_id": "q-relax-comparison"
+          }
+        ],
+        "questions": [
+          {
+            "id": "q-single-source",
+            "kind": "concept",
+            "prompt": "Why is MINIMUM_RERANK_SCORE kept as one named constant instead of repeating its numeric value wherever a cutoff is needed?",
+            "choices": [
+              "It gives the drop threshold a single authoritative definition, so changing the policy means editing one place and every check stays consistent.",
+              "It makes retrieval faster at runtime because named constants are cached more aggressively than literals.",
+              "It lets each module in the retrieval pipeline pick its own threshold value independently of the others."
+            ],
+            "correct_index": 0,
+            "rationale": "A single named constant is the single source of truth for the threshold; duplicating the literal lets the checks drift apart and breaks the policy."
+          },
+          {
+            "id": "q-ordering",
+            "kind": "concept",
+            "prompt": "When must apply_confidence_cutoff run relative to context packing?",
+            "choices": [
+              "Before context packing, so documents scoring below the threshold are removed before the context is constructed.",
+              "After context packing, so the packer can decide which low-scoring documents are worth keeping.",
+              "At either point, because the packer re-checks every document's score against the threshold anyway."
+            ],
+            "correct_index": 0,
+            "rationale": "Running the cutoff before packing ensures weak matches never reach context construction; packing does not re-apply the threshold."
+          },
+          {
+            "id": "q-invariant",
+            "kind": "concept",
+            "prompt": "What does the confidence-cutoff invariant guarantee about retrieval output?",
+            "choices": [
+              "No document with a score below MINIMUM_RERANK_SCORE appears in the packed context or the final results.",
+              "Every document scoring above MINIMUM_RERANK_SCORE must appear, even when the context window is already full.",
+              "Documents scoring below MINIMUM_RERANK_SCORE may still appear when no higher-scoring documents are available."
+            ],
+            "correct_index": 0,
+            "rationale": "The invariant is a floor: anything below the threshold is excluded from both packed context and final results, with no exceptions."
+          },
+          {
+            "id": "q-fix-literal",
+            "kind": "debugging",
+            "prompt": "A new filter in retrieval/rerank.py was written as `if doc.score > 0.5: keep(doc)`. Which change restores the single-source-of-truth policy without altering the cutoff behavior?",
+            "choices": [
+              "if doc.score >= MINIMUM_RERANK_SCORE: keep(doc)",
+              "if doc.score > 0.5:  # 0.5 is the same as MINIMUM_RERANK_SCORE",
+              "if doc.score > 0.3: keep(doc)"
+            ],
+            "correct_index": 0,
+            "rationale": "The fix replaces the bare literal with the shared constant and keeps documents at or above the threshold; a comment or a lowered literal still hard-codes the value elsewhere."
+          },
+          {
+            "id": "q-relax-comparison",
+            "kind": "debugging",
+            "prompt": "A change rewrites the cutoff as `if doc.score < MINIMUM_RERANK_SCORE - 0.05: drop(doc)`. What is wrong with it?",
+            "choices": [
+              "It relaxes the comparison by subtracting a margin, so documents scoring just below MINIMUM_RERANK_SCORE survive and violate the invariant.",
+              "It is correct, because subtracting a small margin makes the filter more precise near the threshold.",
+              "It is wrong only because it calls drop(doc) instead of keep(doc), not because of the threshold math."
+            ],
+            "correct_index": 0,
+            "rationale": "Subtracting a margin lets documents below MINIMUM_RERANK_SCORE through, breaking the invariant; the comparison must stay tied to the unmodified constant."
+          }
+        ]
+      }
+    },
+    {
+      "topic_id": "docs-search-api-rerank-rerank",
+      "topic_revision_id": "docs-search-api-rerank-rerank-rev-1",
+      "difficulty": "medium",
+      "provider": "claude",
+      "plan": {
+        "template_id": "ledger-confidence-cutoff-single-source-policy",
+        "difficulty": "medium",
+        "steps": [
+          {
+            "type": "multiple_choice",
+            "question_id": "threshold-source"
+          },
+          {
+            "type": "multiple_choice",
+            "question_id": "pipeline-order"
+          },
+          {
+            "type": "sandbox"
+          }
+        ],
+        "questions": [
+          {
+            "id": "threshold-source",
+            "kind": "concept",
+            "prompt": "How should retrieval/rerank.py determine whether a reranked document is too weak to keep?",
+            "choices": [
+              "Compare its score against the named MINIMUM_RERANK_SCORE constant",
+              "Repeat the current numeric threshold directly at each filtering site",
+              "Use a lower local threshold when context still has available space"
+            ],
+            "correct_index": 0,
+            "rationale": "MINIMUM_RERANK_SCORE must remain the single source of truth so all filtering sites enforce the same policy without duplicated literals or local exceptions."
+          },
+          {
+            "id": "pipeline-order",
+            "kind": "debugging",
+            "prompt": "Which pipeline behavior preserves the confidence-cutoff invariant?",
+            "choices": [
+              "Pack context first, then remove low-scoring documents from final results",
+              "Run apply_confidence_cutoff before context packing and reject scores strictly below MINIMUM_RERANK_SCORE",
+              "Run apply_confidence_cutoff after context packing and reject only scores far below MINIMUM_RERANK_SCORE"
+            ],
+            "correct_index": 1,
+            "rationale": "Filtering before context construction prevents weak matches from entering packed context, and the score < MINIMUM_RERANK_SCORE rule preserves documents exactly at the threshold while rejecting every document below it."
+          }
+        ]
+      }
+    },
+    {
+      "topic_id": "docs-search-api-context-context",
+      "topic_revision_id": "docs-search-api-context-context-rev-1",
+      "difficulty": "easy",
+      "provider": "claude",
+      "plan": {
+        "template_id": "ledger-context-packing-bounds",
+        "difficulty": "easy",
+        "steps": [
+          {
+            "type": "multiple_choice",
+            "question_id": "q1"
+          },
+          {
+            "type": "multiple_choice",
+            "question_id": "q2"
+          },
+          {
+            "type": "multiple_choice",
+            "question_id": "q3"
+          },
+          {
+            "type": "multiple_choice",
+            "question_id": "q4"
+          }
+        ],
+        "questions": [
+          {
+            "id": "q1",
+            "kind": "concept",
+            "prompt": "Which invariant must retrieval/context.py preserve when packing reranked documents?",
+            "choices": [
+              "The total is within CONTEXT_CHARACTER_BUDGET, every excerpt is within MAX_EXCERPT_CHARACTERS, and packed documents form a prefix of the reranked input.",
+              "The total may exceed CONTEXT_CHARACTER_BUDGET when individual excerpts stay within MAX_EXCERPT_CHARACTERS.",
+              "Documents that do not fit may be skipped so lower-ranked documents can be packed."
+            ],
+            "correct_index": 0,
+            "rationale": "Both character bounds must hold, and packing must preserve a rank-ordered prefix rather than skip documents."
+          },
+          {
+            "id": "q2",
+            "kind": "concept",
+            "prompt": "Where must MAX_EXCERPT_CHARACTERS be enforced?",
+            "choices": [
+              "Only in excerpt_for, because pack_context can trust every caller.",
+              "Only in pack_context, because excerpt_for may return any length.",
+              "In both excerpt_for and pack_context, so each document contribution remains bounded at both layers."
+            ],
+            "correct_index": 2,
+            "rationale": "Both functions must clamp excerpts to MAX_EXCERPT_CHARACTERS to preserve the per-document bound defensively."
+          },
+          {
+            "id": "q3",
+            "kind": "debugging",
+            "prompt": "The next reranked document would make the packed total exceed CONTEXT_CHARACTER_BUDGET. What should pack_context do?",
+            "choices": [
+              "Stop packing immediately and return the prefix accumulated so far.",
+              "Skip that document and try every lower-ranked document.",
+              "Add a shortened version even when doing so changes the established excerpt result."
+            ],
+            "correct_index": 0,
+            "rationale": "Packing stops at the first document that would exceed the total budget, preserving a prefix of the reranked input."
+          },
+          {
+            "id": "q4",
+            "kind": "debugging",
+            "prompt": "Which code-like behavior correctly clamps one document's excerpt?",
+            "choices": [
+              "excerpt = document.text[:MAX_EXCERPT_CHARACTERS]",
+              "excerpt = document.text[:CONTEXT_CHARACTER_BUDGET]",
+              "excerpt = document.text if document.rank == 1 else \"\""
+            ],
+            "correct_index": 0,
+            "rationale": "Slicing at MAX_EXCERPT_CHARACTERS directly enforces the per-document contribution limit."
+          }
+        ]
+      }
+    },
+    {
+      "topic_id": "docs-search-api-context-context",
+      "topic_revision_id": "docs-search-api-context-context-rev-1",
+      "difficulty": "medium",
+      "provider": "claude",
+      "plan": {
+        "template_id": "context-packing-bounded",
+        "difficulty": "medium",
+        "steps": [
+          {
+            "type": "multiple_choice",
+            "question_id": "cost-clamp"
+          },
+          {
+            "type": "multiple_choice",
+            "question_id": "stop-vs-skip"
+          },
+          {
+            "type": "sandbox"
+          }
+        ],
+        "questions": [
+          {
+            "id": "cost-clamp",
+            "kind": "concept",
+            "prompt": "pack_context charges each document a cost against the running total before deciding whether it fits char_budget. Which cost expression keeps every excerpt within MAX_EXCERPT_CHARACTERS while still charging a short document only the characters it actually contributes?",
+            "choices": [
+              "min(len(document.text), max_excerpt)",
+              "len(document.text)",
+              "max_excerpt"
+            ],
+            "correct_index": 0,
+            "rationale": "Clamping with min(len(document.text), max_excerpt) caps a long document at the per-excerpt limit while charging a short document only its real length, so both the per-excerpt bound and the budget accounting stay correct. Using len(document.text) lets a single large document exceed MAX_EXCERPT_CHARACTERS and overflow the window; using max_excerpt overcharges short documents and packs fewer than fit."
+          },
+          {
+            "id": "stop-vs-skip",
+            "kind": "debugging",
+            "prompt": "A teammate's pack_context skips any document whose cost would exceed char_budget and keeps scanning later, smaller documents. The packed list is no longer a rank-ordered prefix. Which complete loop body restores the invariant?",
+            "choices": [
+              "cost = min(len(document.text), max_excerpt); if used + cost > char_budget: break; packed.append(document); used += cost",
+              "cost = min(len(document.text), max_excerpt); if used + cost > char_budget: continue; packed.append(document); used += cost",
+              "cost = min(len(document.text), max_excerpt); packed.append(document); used += cost; if used > char_budget: break"
+            ],
+            "correct_index": 0,
+            "rationale": "Breaking at the first document that would exceed the budget keeps the result a prefix of the reranked input. The continue version skips the overflowing document and admits a lower-ranked one behind it, breaking the prefix property; the third version appends before checking, so the total can exceed char_budget by one document before stopping."
+          }
+        ]
+      }
     }
   ]
 }

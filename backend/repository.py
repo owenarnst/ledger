@@ -21,7 +21,7 @@ from .exercise_templates import public_plan, validate_answers
 from .extraction import resolve_head_sha
 from .ingestion import DEFAULT_PROVIDER, IngestionEvent, adapter_for
 from .pseudocode import build_pseudocode_comments
-from .sandbox import create_hero_sandbox, run_pytest
+from .sandbox import create_sandbox, run_pytest, sandbox_spec_for
 from .verifier import VerificationResult, VerifiedTopic, verify_proposals
 
 
@@ -561,23 +561,27 @@ class LedgerRepository:
         check_id = uuid.uuid4().hex
         selected_difficulty = normalize_difficulty(difficulty)
         sandbox_path = self.sandbox_root / check_id
-        create_hero_sandbox(sandbox_path)
+        # The sandbox exercise is chosen by topic: each topic injects the canonical
+        # violation of its own invariant into its own target file (sandbox_spec_for).
+        spec = sandbox_spec_for(topic_id)
         with connect(self.db_path) as conn:
             revision = self._current_revision(conn, topic_id)
             if not revision:
                 raise KeyError(topic_id)
+            create_sandbox(sandbox_path, spec)
             template = self._exercise_plan_for_check(conn, topic_id, dict(revision), selected_difficulty)
             conn.execute(
                 """
                 INSERT INTO checks
                 (id, topic_id, topic_revision_id, state, sandbox_path, target_file, test_command, difficulty, template_id, plan_json)
-                VALUES (?, ?, ?, 'in_progress', ?, 'retrieval/rerank.py', 'python -m pytest -s tests', ?, ?, ?)
+                VALUES (?, ?, ?, 'in_progress', ?, ?, 'python -m pytest -s tests', ?, ?, ?)
                 """,
                 (
                     check_id,
                     topic_id,
                     revision["id"],
                     str(sandbox_path),
+                    spec.target_file,
                     template["difficulty"],
                     template["template_id"],
                     json.dumps(template, sort_keys=True),
@@ -1013,6 +1017,26 @@ class LedgerRepository:
                 VALUES (?, ?, 'created', 'Seeded from the demo Topic Analyst run.')
                 """,
                 (topic["id"], rev["id"]),
+            )
+        # Pre-cache the hero check's exercise plans (live ClaudeAnalyst-generated,
+        # captured in the fixture) so the Debug-to-Own MCQs load instantly and
+        # deterministically instead of paying a live ``claude -p`` round-trip on the
+        # first open of each difficulty. _exercise_plan_for_check reads this cache by
+        # (topic_revision_id, difficulty); hard is sandbox-only and needs no plan.
+        for entry in seed.get("exercise_plans", []):
+            conn.execute(
+                """
+                INSERT INTO exercise_plans (id, topic_id, topic_revision_id, difficulty, provider, plan_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    uuid.uuid4().hex,
+                    entry["topic_id"],
+                    entry["topic_revision_id"],
+                    entry["difficulty"],
+                    entry.get("provider", "claude"),
+                    json.dumps(entry["plan"], sort_keys=True),
+                ),
             )
         conn.commit()
 

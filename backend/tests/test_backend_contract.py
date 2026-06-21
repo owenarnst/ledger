@@ -1,11 +1,22 @@
 import json
+from pathlib import Path
 
 from backend import exercise_generation
 from backend.__main__ import main
 from backend.api import create_app
+from backend.db import connect
 from backend.hooks import HookSpool, build_session_start_nudge, reset_ledger
 from backend.ingestion import ClaudeCodeAdapter, CodexAdapter
 from backend.repository import LedgerRepository
+
+
+def _clear_cached_exercise_plans(repo: LedgerRepository) -> None:
+    """Drop the demo-seeded exercise-plan cache so a test exercises the generation
+    path. The seed pre-caches the hero check's easy/medium plans (so the demo loads
+    instantly); these tests instead verify what happens on a cache miss."""
+    with connect(repo.db_path) as conn:
+        conn.execute("DELETE FROM exercise_plans")
+        conn.commit()
 
 
 class FakeExerciseGenerator:
@@ -182,6 +193,7 @@ def test_pseudocode_comments_remove_legacy_check_line_comments(tmp_path):
 def test_easy_check_returns_multiple_choice_only_plan(tmp_path):
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes", exercise_generator=FakeExerciseGenerator())
     repo.initialize()
+    _clear_cached_exercise_plans(repo)
 
     check = repo.create_check("tenant-cache-isolation", difficulty="easy")
 
@@ -206,6 +218,7 @@ def test_easy_fallback_plan_is_multiple_choice_only():
 def test_medium_check_uses_generated_implementation_hint_then_sandbox_plan(tmp_path):
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes", exercise_generator=FakeExerciseGenerator())
     repo.initialize()
+    _clear_cached_exercise_plans(repo)
 
     check = repo.create_check("tenant-cache-isolation", difficulty="medium")
 
@@ -265,6 +278,7 @@ def test_generated_exercise_plan_is_stored_and_reused(tmp_path):
     generator = FakeExerciseGenerator()
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes", exercise_generator=generator)
     repo.initialize()
+    _clear_cached_exercise_plans(repo)
 
     first = repo.create_check("tenant-cache-isolation", difficulty="medium")
     second = repo.create_check("tenant-cache-isolation", difficulty="medium")
@@ -285,9 +299,86 @@ def test_hard_check_keeps_current_sandbox_plan(tmp_path):
     assert check["target_file"] == "retrieval/rerank.py"
 
 
+def test_each_topic_stages_its_own_sandbox_exercise(tmp_path):
+    """Every seeded topic's check stages an exercise in its own target file, and
+    the injected bug breaks the hero suite while restoring the documented fix makes
+    it pass. Guards against the regression where every topic silently handed the
+    learner the tenant-isolation exercise."""
+    from backend.sandbox import SANDBOX_SPECS, run_pytest
+
+    repo = LedgerRepository(
+        tmp_path / "ledger.db",
+        sandbox_root=tmp_path / "sandboxes",
+        exercise_generator=FakeExerciseGenerator(),
+    )
+    repo.initialize()
+
+    expected_targets = {
+        "tenant-cache-isolation": "retrieval/rerank.py",
+        "docs-search-api-rerank-rerank": "retrieval/rerank.py",
+        "docs-search-api-context-context": "retrieval/context.py",
+    }
+    for topic_id, target in expected_targets.items():
+        check = repo.create_check(topic_id, difficulty="hard")
+        assert check["target_file"] == target, topic_id
+
+        sandbox = Path(check["sandbox_path"])
+        assert not run_pytest(sandbox).passed, f"{topic_id}: injected bug did not fail any test"
+
+        spec = SANDBOX_SPECS[topic_id]
+        edited = sandbox / spec.target_file
+        edited.write_text(edited.read_text().replace(spec.mutated, spec.original))
+        assert run_pytest(sandbox).passed, f"{topic_id}: documented fix did not pass the suite"
+
+
+def test_demo_seed_precaches_exercise_plans_for_every_topic(tmp_path):
+    """The demo seed pre-caches every topic's easy/medium plans so the Debug-to-Own
+    MCQs load instantly and deterministically — no live ``claude -p`` round-trip on
+    first open. easy is multiple-choice only; medium ends in the topic's sandbox.
+    Regression guard for the demo experience across all seeded topics."""
+
+    class ExplodingGenerator:
+        provider = "should-not-run"
+
+        def generate_plan(self, *, topic, revision, difficulty):
+            raise AssertionError(f"live generation ran for {difficulty}; expected a cache hit")
+
+    repo = LedgerRepository(
+        tmp_path / "ledger.db",
+        sandbox_root=tmp_path / "sandboxes",
+        exercise_generator=ExplodingGenerator(),
+    )
+    repo.initialize()
+
+    topic_ids = [
+        "tenant-cache-isolation",
+        "docs-search-api-rerank-rerank",
+        "docs-search-api-context-context",
+    ]
+    for topic_id in topic_ids:
+        # both are served straight from the seeded cache: the generator, which
+        # raises if called, never runs.
+        easy = repo.create_check(topic_id, difficulty="easy")
+        medium = repo.create_check(topic_id, difficulty="medium")
+
+        easy_steps = [step["type"] for step in easy["plan"]["steps"]]
+        assert easy["difficulty"] == "easy"
+        assert easy_steps and all(kind == "multiple_choice" for kind in easy_steps), topic_id
+
+        medium_steps = [step["type"] for step in medium["plan"]["steps"]]
+        assert medium["difficulty"] == "medium"
+        assert "multiple_choice" in medium_steps, topic_id
+        assert medium_steps[-1] == "sandbox", topic_id
+
+        # served plans never leak the answer key
+        assert "correct_index" not in str(easy["plan"]), topic_id
+        assert "correct_index" not in str(medium["plan"]), topic_id
+
+
 def test_submit_check_answers_validates_easy_mode_server_side(tmp_path):
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes", exercise_generator=FakeExerciseGenerator())
     repo.initialize()
+    _clear_cached_exercise_plans(repo)
     check = repo.create_check("tenant-cache-isolation", difficulty="easy")
 
     result = repo.submit_check_answers(
@@ -307,6 +398,7 @@ def test_submit_check_answers_validates_easy_mode_server_side(tmp_path):
 def test_submit_check_answers_records_wrong_answer(tmp_path):
     repo = LedgerRepository(tmp_path / "ledger.db", sandbox_root=tmp_path / "sandboxes", exercise_generator=FakeExerciseGenerator())
     repo.initialize()
+    _clear_cached_exercise_plans(repo)
     check = repo.create_check("tenant-cache-isolation", difficulty="easy")
 
     result = repo.submit_check_answers(check["id"], {"tenant-filter-purpose": 1, "tenant-filter-debug": 0})
