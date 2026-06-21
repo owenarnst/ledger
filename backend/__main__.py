@@ -13,6 +13,7 @@ from .hooks import (
     drain_spool,
     install_hooks,
     reset_ledger,
+    session_end,
     session_start,
     spool_commit,
 )
@@ -53,6 +54,15 @@ def build_parser() -> argparse.ArgumentParser:
     session.add_argument("--spool-dir", default=str(DEFAULT_SPOOL_DIR))
     session.add_argument("--cwd", required=True)
     session.add_argument("--base-url", default=DEFAULT_BASE_URL)
+
+    session_end_parser = subcommands.add_parser(
+        "session-end", help="Drain spool and emit conditional SessionEnd Ledger guidance."
+    )
+    session_end_parser.add_argument("--db", default=str(DEFAULT_DB_PATH))
+    session_end_parser.add_argument("--sandbox-root", default=str(DEFAULT_SANDBOX_ROOT))
+    session_end_parser.add_argument("--spool-dir", default=str(DEFAULT_SPOOL_DIR))
+    session_end_parser.add_argument("--cwd", required=True)
+    session_end_parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
 
     install = subcommands.add_parser("install", help="Install Ledger's git + Claude hooks into a repo.")
     install.add_argument("--repo", required=True)
@@ -98,6 +108,14 @@ def main(argv: list[str] | None = None) -> int:
             f"(drained {result['drained']}, reconciled={result['reconciled'].get('reconciled')})",
             file=sys.stderr,
         )
+        return 0
+    if args.command == "session-end":
+        repo = LedgerRepository(db_path=Path(args.db), sandbox_root=Path(args.sandbox_root))
+        repo.initialize()
+        result = session_end(repo, cwd=args.cwd, base_url=args.base_url, spool_dir=Path(args.spool_dir))
+        # stdout must be the JSON envelope Claude Code consumes; status goes to stderr.
+        print(json.dumps(result["envelope"]))
+        print(f"[ledger] session-end drained {result['drained']} commit event(s)", file=sys.stderr)
         return 0
     if args.command == "install":
         result = install_hooks(args.repo, interpreter=sys.executable, base_url=args.base_url)
