@@ -462,10 +462,7 @@ def test_session_end_hook_gives_claude_conditional_ledger_guidance(tmp_path):
     assert result["ready"] == 3
     output = result["envelope"]["hookSpecificOutput"]
     assert output["hookEventName"] == "SessionEnd"
-    assert "Decide from the actual session content" in output["additionalContext"]
-    assert "what changed" in output["additionalContext"]
-    assert "why it may be load-bearing" in output["additionalContext"]
-    assert "If this was routine or cosmetic, say nothing" in output["additionalContext"]
+    assert "Only mention Ledger if you believe this session ended with complex" in output["additionalContext"]
     assert "Open http://127.0.0.1:4317/p/docs-search-api" in output["additionalContext"]
 
 
@@ -533,4 +530,4 @@ def test_cli_session_end_outputs_claude_hook_envelope(tmp_path, capsys):
 
     output = json.loads(capsys.readouterr().out)
     assert output["hookSpecificOutput"]["hookEventName"] == "SessionEnd"
-    assert "Decide from the actual session content" in output["hookSpecificOutput"]["additionalContext"]
+    assert "Only mention Ledger if" in output["hookSpecificOutput"]["additionalContext"]

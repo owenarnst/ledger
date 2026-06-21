@@ -142,12 +142,10 @@ def session_end(
             "hookEventName": "SessionEnd",
             "additionalContext": (
                 f"[Ledger] {drained['imported']} recent commit event(s) were captured. "
-                "Decide from the actual session content whether the work was complex, load-bearing, "
-                "or Claude-assisted enough that the user should verify they understand it. "
-                "If this was routine or cosmetic, say nothing about Ledger. "
-                "If it is worth surfacing, write a short, friendly note in your own voice: "
-                "name what changed, why it may be load-bearing, and invite the user to open Ledger. "
-                f"Use this destination: {line}"
+                "Only mention Ledger if you believe this session ended with complex, load-bearing, "
+                "or Claude-assisted work the user should verify they understand. "
+                "If the work was trivial, do not mention Ledger. "
+                f"If it is worth surfacing, say: {line}"
             ),
             "sessionTitle": f"Ledger: {ready} checks ready",
         }
