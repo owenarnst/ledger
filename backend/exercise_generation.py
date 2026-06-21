@@ -25,6 +25,7 @@ class ExercisePlanGenerator(Protocol):
 @dataclass(frozen=True)
 class CliExercisePlanGenerator:
     provider: str = "claude"
+    fallback_provider: str = "codex"
     timeout_seconds: int = 45
 
     def generate_plan(
@@ -38,9 +39,15 @@ class CliExercisePlanGenerator:
         if selected == "hard":
             return fallback_plan(selected)
         prompt = build_generation_prompt(topic=topic, revision=revision, difficulty=selected)
-        response = run_generator_cli(self.provider, prompt, self.timeout_seconds)
-        plan = parse_plan_json(response)
-        return normalize_generated_plan(plan, difficulty=selected)
+        last_error: Exception | None = None
+        for provider in generation_provider_order(self.provider, self.fallback_provider):
+            try:
+                response = run_generator_cli(provider, prompt, self.timeout_seconds)
+                plan = parse_plan_json(response)
+                return normalize_generated_plan(plan, difficulty=selected)
+            except (json.JSONDecodeError, ValueError) as exc:
+                last_error = exc
+        raise last_error or ValueError("exercise generator returned no plan")
 
 
 def normalize_difficulty(difficulty: str | None) -> str:
@@ -55,6 +62,15 @@ def fallback_plan(difficulty: str) -> dict[str, Any]:
     plan["difficulty"] = difficulty
     plan["template_id"] = f"generated-{difficulty}-fallback"
     return plan
+
+
+def generation_provider_order(primary: str, fallback: str) -> list[str]:
+    providers = []
+    for provider in [primary, fallback]:
+        selected = (provider or "").lower()
+        if selected and selected not in providers:
+            providers.append(selected)
+    return providers
 
 
 def build_generation_prompt(*, topic: dict[str, Any], revision: dict[str, Any], difficulty: str) -> str:
@@ -96,7 +112,7 @@ def run_generator_cli(provider: str, prompt: str, timeout_seconds: int) -> str:
     if selected in {"claude", "claude-code"}:
         command = ["claude", "-p", "--output-format", "json"]
     elif selected in {"codex", "codex-exec"}:
-        command = ["codex", "-a", "never", "exec", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral", "-"]
+        command = ["codex", "exec", "--sandbox", "workspace-write", "--skip-git-repo-check", "--ephemeral", "-"]
     else:
         raise ValueError(f"unsupported exercise provider: {selected}")
     try:

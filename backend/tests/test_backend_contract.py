@@ -1,5 +1,6 @@
 import json
 
+from backend import exercise_generation
 from backend.__main__ import main
 from backend.api import create_app
 from backend.hooks import HookSpool, build_session_start_nudge, reset_ledger
@@ -208,6 +209,48 @@ def test_medium_check_uses_generated_implementation_hint_then_sandbox_plan(tmp_p
     assert check["plan"]["questions"][0]["kind"] == "concept"
     assert check["plan"]["questions"][1]["kind"] == "debugging"
     assert check["plan"]["questions"][1]["choices"][0].startswith("def visible_documents_for_tenant")
+
+
+def test_cli_exercise_generator_falls_back_from_claude_to_codex(monkeypatch):
+    calls = []
+
+    def fake_run_generator_cli(provider, prompt, timeout_seconds):
+        calls.append(provider)
+        if provider == "claude":
+            return ""
+        return json.dumps(
+            {
+                "template_id": "generated-medium",
+                "difficulty": "medium",
+                "steps": [
+                    {"type": "multiple_choice", "question_id": "tenant-filter-purpose"},
+                    {"type": "sandbox"},
+                ],
+                "questions": [
+                    {
+                        "id": "tenant-filter-purpose",
+                        "kind": "concept",
+                        "prompt": "What invariant matters?",
+                        "choices": ["Tenant isolation", "Score ordering", "Text length"],
+                        "correct_index": 0,
+                        "rationale": "The sandbox fix must preserve tenant isolation.",
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(exercise_generation, "run_generator_cli", fake_run_generator_cli)
+    generator = exercise_generation.CliExercisePlanGenerator(provider="claude", fallback_provider="codex")
+
+    plan = generator.generate_plan(
+        topic={"title": "Tenant visibility", "summary": "Filter tenant documents."},
+        revision={"invariant": "Candidate documents must be filtered by tenant_id.", "code_path": "backend/search.py"},
+        difficulty="medium",
+    )
+
+    assert calls == ["claude", "codex"]
+    assert plan["template_id"] == "generated-medium"
+    assert [step["type"] for step in plan["steps"]] == ["multiple_choice", "sandbox"]
 
 
 def test_generated_exercise_plan_is_stored_and_reused(tmp_path):
